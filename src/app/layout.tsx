@@ -3,8 +3,13 @@ import "@excalidraw/excalidraw/index.css";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Board",
-  description: "A collaborative whiteboard built with Next.js and Excalidraw.",
+  title: "WhiteBoard",
+  description: "WhiteBoard is a collaborative whiteboard built with Next.js and Excalidraw.",
+  icons: {
+    icon: "/logo.png",
+    shortcut: "/logo.png",
+    apple: "/logo.png",
+  },
 };
 
 export default function RootLayout({

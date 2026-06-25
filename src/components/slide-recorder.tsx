@@ -1530,7 +1530,7 @@ export function SlideRecorder({
     streamRef.current = null;
     recorderRef.current = null;
 
-    const fileName = `board-recording-${new Date()
+    const fileName = `whiteboard-recording-${new Date()
       .toISOString()
       .replace(/[:.]/g, "-")}.mp4`;
 

@@ -335,7 +335,7 @@ export function ExcalidrawBoard() {
     <div className="relative h-dvh w-full overflow-hidden">
       <Excalidraw
         langCode="zh-CN"
-        name="Board"
+        name="WhiteBoard"
         autoFocus
         excalidrawAPI={setExcalidrawAPI}
         onChange={syncSlides}

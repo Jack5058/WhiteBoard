@@ -1,4 +1,4 @@
-# Board
+# WhiteBoard
 
 基于 Next.js App Router 搭建的白板网站框架，后续用于接入 Excalidraw。
 
