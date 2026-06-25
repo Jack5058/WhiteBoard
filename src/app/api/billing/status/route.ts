@@ -1,5 +1,7 @@
 import { getAuthenticatedUser, hasLifetimeEntitlement } from "@/lib/billing-server";
 
+export const runtime = "edge";
+
 export async function GET(request: Request) {
   const { user, admin } = await getAuthenticatedUser(request);
 
