@@ -22,16 +22,25 @@ npm run dev
 
 ## 支付配置
 
-微信支付与支付宝支付通过环境变量配置付款链接或二维码：
+微信支付通过环境变量配置付款链接或二维码：
 
 ```bash
 NEXT_PUBLIC_WECHAT_PAY_URL=https://your-wechat-pay-link
 NEXT_PUBLIC_WECHAT_PAY_QR_URL=https://your-cdn.com/wechat-pay-qr.png
-NEXT_PUBLIC_ALIPAY_PAY_URL=https://your-alipay-pay-link
-NEXT_PUBLIC_ALIPAY_PAY_QR_URL=https://your-cdn.com/alipay-pay-qr.png
 ```
 
-付费状态仍绑定到 Supabase `user_entitlements` 表，登录后读取当前账号的 `lifetime` 状态。
+支付宝使用开放平台电脑网站支付，服务端环境变量如下：
+
+```bash
+NEXT_PUBLIC_APP_URL=https://www.recwhiteboard.com
+ALIPAY_APP_ID=2021006168647210
+ALIPAY_SELLER_ID=2088780347820591
+ALIPAY_GATEWAY=https://openapi.alipay.com/gateway.do
+ALIPAY_APP_PRIVATE_KEY=your-application-private-key
+ALIPAY_PUBLIC_KEY=your-alipay-public-key
+```
+
+付费状态绑定到 Supabase `user_entitlements` 表，支付订单写入 `payment_orders` 表，登录后读取当前账号的 `lifetime` 状态。
 
 ## 常用命令
 

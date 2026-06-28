@@ -37,11 +37,9 @@ const PAYMENT_OPTIONS: PaymentOption[] = [
   {
     id: "alipay",
     name: "支付宝支付",
-    hint: "支付宝扫码或打开付款链接",
-    url: process.env.NEXT_PUBLIC_ALIPAY_PAY_URL,
-    qrUrl: process.env.NEXT_PUBLIC_ALIPAY_PAY_QR_URL,
-    urlEnv: "NEXT_PUBLIC_ALIPAY_PAY_URL",
-    qrEnv: "NEXT_PUBLIC_ALIPAY_PAY_QR_URL",
+    hint: "跳转支付宝官方收银台",
+    urlEnv: "ALIPAY_APP_ID",
+    qrEnv: "ALIPAY_APP_PRIVATE_KEY",
   },
 ];
 
@@ -157,6 +155,7 @@ export function AccountMenu({ onEntitlementChange }: AccountMenuProps) {
   const [paid, setPaid] = useState(false);
   const [paymentOpen, setPaymentOpen] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("wechat");
+  const [paymentLoading, setPaymentLoading] = useState(false);
   const [paymentMessage, setPaymentMessage] = useState<string | null>(null);
   const supabase = useMemo(() => getSupabaseClient(), []);
   const accountInputRef = useRef<HTMLInputElement>(null);
@@ -267,6 +266,46 @@ export function AccountMenu({ onEntitlementChange }: AccountMenuProps) {
 
     return () => authSubscription?.data.subscription.unsubscribe();
   }, [refreshEntitlement, resetForm, supabase, updatePaidState]);
+
+  useEffect(() => {
+    if (!user) return;
+
+    const params = new URLSearchParams(window.location.search);
+    const paymentResult = params.get("payment");
+    if (!paymentResult) return;
+
+    let attempts = 0;
+    let timer: number | undefined;
+    const frame = window.requestAnimationFrame(() => {
+      window.history.replaceState({}, "", window.location.pathname);
+      setPaymentOpen(true);
+      setPaymentMethod("alipay");
+
+      if (paymentResult !== "success") {
+        setPaymentMessage("支付未完成，你可以稍后再试。");
+        return;
+      }
+
+      setPaymentMessage("支付已提交，正在确认会员权益...");
+      timer = window.setInterval(() => {
+        attempts += 1;
+        void refreshEntitlement().then((isPaid) => {
+          if (isPaid) {
+            setPaymentMessage("永久会员已开通，感谢支持！");
+            if (timer) window.clearInterval(timer);
+          } else if (attempts >= 8) {
+            setPaymentMessage("支付结果仍在同步，请稍后点击“刷新权益状态”。");
+            if (timer) window.clearInterval(timer);
+          }
+        });
+      }, 1500);
+    });
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+      if (timer) window.clearInterval(timer);
+    };
+  }, [refreshEntitlement, user]);
 
   useEffect(() => {
     let observedMenu: HTMLElement | null = null;
@@ -500,8 +539,56 @@ export function AccountMenu({ onEntitlementChange }: AccountMenuProps) {
     setPaymentOpen(true);
   }, [paid, resetForm, user]);
 
-  const openSelectedPayment = useCallback(() => {
+  const openSelectedPayment = useCallback(async () => {
     if (paid) return;
+
+    if (selectedPayment.id === "alipay") {
+      if (!supabase) {
+        setPaymentMessage("请先配置 Supabase 环境变量。");
+        return;
+      }
+
+      setPaymentLoading(true);
+      setPaymentMessage(null);
+      const { data } = await supabase.auth.getSession();
+      const accessToken = data.session?.access_token;
+      if (!accessToken) {
+        setPaymentLoading(false);
+        setPaymentOpen(false);
+        resetForm("login");
+        setMessage("登录状态已失效，请重新登录。");
+        setOpen(true);
+        return;
+      }
+
+      try {
+        const response = await fetch("/api/billing/alipay/create", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${accessToken}` },
+        });
+        const result = (await response.json()) as {
+          url?: string;
+          paid?: boolean;
+          message?: string;
+        };
+
+        if (result.paid) {
+          updatePaidState(true);
+          setPaymentMessage("当前账号已拥有永久使用权益。");
+          return;
+        }
+        if (!response.ok || !result.url) {
+          setPaymentMessage(result.message || "创建支付宝订单失败，请稍后重试。");
+          return;
+        }
+        window.location.assign(result.url);
+      } catch {
+        setPaymentMessage("无法连接支付宝支付服务，请稍后重试。");
+      } finally {
+        setPaymentLoading(false);
+      }
+      return;
+    }
 
     if (selectedPayment.url) {
       window.open(selectedPayment.url, "_blank", "noopener,noreferrer");
@@ -512,14 +599,14 @@ export function AccountMenu({ onEntitlementChange }: AccountMenuProps) {
     }
 
     if (selectedPayment.qrUrl) {
-      setPaymentMessage(`请使用${selectedPayment.name}扫码完成 ¥19.90 支付。`);
+      setPaymentMessage(`请使用${selectedPayment.name}扫码完成 ¥49.90 支付。`);
       return;
     }
 
     setPaymentMessage(
       `尚未配置${selectedPayment.name}。请在 .env.local 中配置 ${selectedPayment.urlEnv} 或 ${selectedPayment.qrEnv}。`,
     );
-  }, [paid, selectedPayment]);
+  }, [paid, resetForm, selectedPayment, supabase, updatePaidState]);
 
   const refreshPaymentStatus = useCallback(async () => {
     setPaymentMessage("正在刷新权益状态...");
@@ -536,6 +623,21 @@ export function AccountMenu({ onEntitlementChange }: AccountMenuProps) {
   const isRegister = view === "register";
   const isResetPassword = view === "reset";
   const isUpdatingPassword = view === "updatePassword";
+  const selectedPaymentDescription =
+    selectedPayment.id === "alipay"
+      ? "点击下方按钮进入支付宝官方收银台，支付成功后会员会自动开通。"
+      : selectedPayment.url
+        ? `点击下方按钮打开${selectedPayment.name}付款链接。`
+        : `请配置 ${selectedPayment.urlEnv} 或 ${selectedPayment.qrEnv} 后启用${selectedPayment.name}。`;
+  const selectedPaymentButtonLabel = paymentLoading
+    ? "正在创建订单..."
+    : selectedPayment.id === "alipay"
+      ? "支付宝支付 ¥49.90"
+      : selectedPayment.url
+        ? `打开${selectedPayment.name}`
+        : selectedPayment.qrUrl
+          ? "显示付款提示"
+          : "付款方式未配置";
 
   return (
     <>
@@ -934,14 +1036,12 @@ export function AccountMenu({ onEntitlementChange }: AccountMenuProps) {
                         className="mx-auto h-36 w-36 rounded-xl bg-white object-contain p-2 shadow-sm"
                       />
                       <p className="mt-3 text-sm text-zinc-600">
-                        使用{selectedPayment.name}扫码支付 ¥19.90。
+                        使用{selectedPayment.name}扫码支付 ¥49.90。
                       </p>
                     </>
                   ) : (
                     <p className="text-sm leading-6 text-zinc-500">
-                      {selectedPayment.url
-                        ? `点击下方按钮打开${selectedPayment.name}付款链接。`
-                        : `请配置 ${selectedPayment.urlEnv} 或 ${selectedPayment.qrEnv} 后启用${selectedPayment.name}。`}
+                      {selectedPaymentDescription}
                     </p>
                   )}
                 </div>
@@ -949,15 +1049,12 @@ export function AccountMenu({ onEntitlementChange }: AccountMenuProps) {
                 <div className="flex gap-2">
                   <button
                     type="button"
-                    onClick={openSelectedPayment}
+                    onClick={() => void openSelectedPayment()}
+                    disabled={paymentLoading}
                     className="flex h-12 flex-1 items-center justify-center gap-2 rounded-xl bg-[#f5b82e] text-sm font-semibold text-[#4b3200] transition hover:bg-[#e9aa1d]"
                   >
                     <MoneyIcon />
-                    {selectedPayment.url
-                      ? `打开${selectedPayment.name}`
-                      : selectedPayment.qrUrl
-                        ? "显示付款提示"
-                        : "付款方式未配置"}
+                    {selectedPaymentButtonLabel}
                   </button>
                   <button
                     type="button"

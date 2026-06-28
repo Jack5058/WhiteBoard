@@ -2,6 +2,10 @@ import "server-only";
 
 import { createClient } from "@supabase/supabase-js";
 
+export const LIFETIME_PRICE_CNY = "49.90";
+export const LIFETIME_PRICE_CENTS = 4990;
+export const LIFETIME_PRODUCT_NAME = "WhiteBoard 永久会员";
+
 export function getSupabaseAdmin() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -41,4 +45,25 @@ export async function hasLifetimeEntitlement(
 
   if (error) throw error;
   return data?.lifetime === true;
+}
+
+export async function grantLifetimeEntitlement(
+  admin: NonNullable<ReturnType<typeof getSupabaseAdmin>>,
+  userId: string,
+  paymentProvider: string,
+  paymentReference: string,
+) {
+  const { error } = await admin.from("user_entitlements").upsert(
+    {
+      user_id: userId,
+      lifetime: true,
+      paid_at: new Date().toISOString(),
+      payment_provider: paymentProvider,
+      payment_reference: paymentReference,
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: "user_id" },
+  );
+
+  if (error) throw error;
 }
