@@ -37,6 +37,17 @@ function pemToArrayBuffer(pem: string) {
   return bytes.buffer;
 }
 
+function arrayBufferToBase64(buffer: ArrayBuffer) {
+  let binary = "";
+  const bytes = new Uint8Array(buffer);
+
+  for (let index = 0; index < bytes.length; index += 1) {
+    binary += String.fromCharCode(bytes[index]);
+  }
+
+  return btoa(binary);
+}
+
 function getSignContent(params: AlipaySignParams) {
   return Object.entries(params)
     .filter(([, value]) => value !== "")
@@ -79,7 +90,7 @@ export async function signAlipayParams(
     new TextEncoder().encode(getSignContent(params)),
   );
 
-  return btoa(String.fromCharCode(...new Uint8Array(signature)));
+  return arrayBufferToBase64(signature);
 }
 
 export async function verifyAlipayParams(
