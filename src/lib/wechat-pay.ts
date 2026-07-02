@@ -136,14 +136,14 @@ export async function createWechatNativePayOrder(params: WechatPayOrderParams) {
     `POST\n${url.pathname}${url.search}\n${timestamp}\n${nonce}\n${body}\n`,
     config.merchantPrivateKey,
   );
-  const authorization = [
-    "WECHATPAY2-SHA256-RSA2048",
+  const authorizationParams = [
     `mchid="${config.mchId}"`,
     `nonce_str="${nonce}"`,
     `timestamp="${timestamp}"`,
     `serial_no="${config.merchantSerialNo}"`,
     `signature="${signature}"`,
   ].join(",");
+  const authorization = `WECHATPAY2-SHA256-RSA2048 ${authorizationParams}`;
 
   const response = await fetch(url, {
     method: "POST",
@@ -151,7 +151,6 @@ export async function createWechatNativePayOrder(params: WechatPayOrderParams) {
       Accept: "application/json",
       Authorization: authorization,
       "Content-Type": "application/json",
-      "Wechatpay-Serial": config.merchantSerialNo,
     },
     body,
   });
