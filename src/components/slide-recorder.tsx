@@ -105,6 +105,10 @@ const MAX_VIDEO_HEIGHT = 1080;
 const MIN_TELEPROMPTER_WIDTH = 360;
 const MIN_TELEPROMPTER_HEIGHT = 260;
 const TELEPROMPTER_VISIBLE_SCRIPT_COUNT = 10;
+const MIN_TELEPROMPTER_SPEED = 1;
+const MAX_TELEPROMPTER_SPEED = 120;
+const MIN_TELEPROMPTER_FONT_SIZE = 16;
+const MAX_TELEPROMPTER_FONT_SIZE = 36;
 const DEFAULT_TELEPROMPTER_SIZE = {
   width: 540,
   height: 460,
@@ -123,6 +127,10 @@ function formatDuration(seconds: number) {
   return `${minutes.toString().padStart(2, "0")}:${remainingSeconds
     .toString()
     .padStart(2, "0")}`;
+}
+
+function clampValue(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value));
 }
 
 function makeEven(value: number) {
@@ -523,6 +531,7 @@ export function SlideRecorder({
   const [teleprompterPlaying, setTeleprompterPlaying] = useState(false);
   const [teleprompterSpeed, setTeleprompterSpeed] = useState(12);
   const [teleprompterOpacity, setTeleprompterOpacity] = useState(0);
+  const [teleprompterFontSize, setTeleprompterFontSize] = useState(22);
   const [teleprompterScripts, setTeleprompterScripts] = useState([""]);
   const [activeTeleprompterScriptIndex, setActiveTeleprompterScriptIndex] =
     useState(0);
@@ -561,9 +570,7 @@ export function SlideRecorder({
     useRef<TeleprompterResizeOperation | null>(null);
   const teleprompterDragRef =
     useRef<TeleprompterDragOperation | null>(null);
-  const speedProgress = teleprompterSpeed / 100;
-  const effectiveTeleprompterSpeed =
-    teleprompterSpeed === 0 ? 0 : 3 + 117 * speedProgress ** 2;
+  const effectiveTeleprompterSpeed = teleprompterSpeed * 2;
   const teleprompterVisualOpacity = Math.max(0.15, 1 - teleprompterOpacity / 100);
   const activeTeleprompterScript =
     teleprompterScripts[activeTeleprompterScriptIndex] ?? "";
@@ -693,6 +700,26 @@ export function SlideRecorder({
     },
     [selectRelativeTeleprompterScript, teleprompterScripts.length],
   );
+
+  const updateTeleprompterSpeed = useCallback((value: number) => {
+    setTeleprompterSpeed(
+      clampValue(
+        Math.round(Number.isFinite(value) ? value : 0),
+        MIN_TELEPROMPTER_SPEED,
+        MAX_TELEPROMPTER_SPEED,
+      ),
+    );
+  }, []);
+
+  const updateTeleprompterFontSize = useCallback((value: number) => {
+    setTeleprompterFontSize(
+      clampValue(
+        Math.round(Number.isFinite(value) ? value : MIN_TELEPROMPTER_FONT_SIZE),
+        MIN_TELEPROMPTER_FONT_SIZE,
+        MAX_TELEPROMPTER_FONT_SIZE,
+      ),
+    );
+  }, []);
 
   const addTeleprompterScript = useCallback(() => {
     setTeleprompterScripts((current) => {
@@ -1650,7 +1677,7 @@ export function SlideRecorder({
             </button>
           </header>
 
-          <div className="mx-4 mt-2 flex h-12 items-center gap-3 rounded-xl bg-zinc-50 px-3">
+          <div className="mx-4 mt-2 flex items-center gap-2 rounded-xl bg-zinc-50 px-2.5 py-2">
             <button
               type="button"
               onClick={() => setTeleprompterPlaying((current) => !current)}
@@ -1677,23 +1704,24 @@ export function SlideRecorder({
                 </svg>
               )}
             </button>
-            <div className="flex min-w-0 flex-1 items-center gap-4">
-              <label className="flex min-w-0 flex-1 items-center gap-2 text-xs font-medium whitespace-nowrap text-zinc-500">
-                <span>速度</span>
+            <div className="flex min-w-0 flex-1 items-center gap-3">
+              <div className="flex shrink-0 items-center gap-1.5">
+                <span className="shrink-0 text-xs font-medium text-zinc-500">速度</span>
                 <input
-                  type="range"
-                  min="0"
-                  max="100"
+                  type="number"
+                  min={MIN_TELEPROMPTER_SPEED}
+                  max={MAX_TELEPROMPTER_SPEED}
                   step="1"
                   value={teleprompterSpeed}
                   onChange={(event) =>
-                    setTeleprompterSpeed(Number(event.target.value))
+                    updateTeleprompterSpeed(Number(event.target.value))
                   }
-                  className="h-1 min-w-0 flex-1 accent-zinc-700"
+                  className="h-6 w-12 rounded-md border border-zinc-200 bg-zinc-50 text-center text-xs font-semibold tabular-nums text-zinc-700 outline-none focus:border-zinc-400"
+                  aria-label="提词器滚动速度"
                 />
-              </label>
+              </div>
               <label className="flex min-w-0 flex-1 items-center gap-2 text-xs font-medium whitespace-nowrap text-zinc-500">
-                <span>透明度</span>
+                <span className="shrink-0">透明度</span>
                 <input
                   type="range"
                   min="0"
@@ -1706,9 +1734,56 @@ export function SlideRecorder({
                   className="h-1 min-w-0 flex-1 accent-zinc-700"
                 />
               </label>
+              <div className="flex shrink-0 items-center gap-1.5">
+                <span className="shrink-0 text-xs font-medium text-zinc-500">字号</span>
+                <input
+                  type="number"
+                  min={MIN_TELEPROMPTER_FONT_SIZE}
+                  max={MAX_TELEPROMPTER_FONT_SIZE}
+                  step="1"
+                  value={teleprompterFontSize}
+                  onChange={(event) =>
+                    updateTeleprompterFontSize(Number(event.target.value))
+                  }
+                  className="h-6 w-12 rounded-md border border-zinc-200 bg-zinc-50 text-center text-xs font-semibold tabular-nums text-zinc-700 outline-none focus:border-zinc-400"
+                  aria-label="提词器脚本字号"
+                />
+              </div>
+              <button
+                type="button"
+                title={
+                  teleprompterKeyboardEnabled
+                    ? "录制时左右键同步切换脚本页已开启"
+                    : "录制时左右键同步切换脚本页已关闭"
+                }
+                aria-label="幻灯片同步切换"
+                aria-pressed={teleprompterKeyboardEnabled}
+                onClick={() =>
+                  setTeleprompterKeyboardEnabled((current) => !current)
+                }
+                className={`flex h-8 shrink-0 items-center gap-1.5 text-[11px] font-medium transition ${
+                  teleprompterKeyboardEnabled
+                    ? "text-zinc-900"
+                    : "text-zinc-500 hover:text-zinc-800"
+                }`}
+              >
+                <span
+                  className={`relative h-4 w-7 rounded-full transition ${
+                    teleprompterKeyboardEnabled ? "bg-white/30" : "bg-zinc-200"
+                  }`}
+                >
+                  <span
+                    className={`absolute top-0.5 left-0.5 h-3 w-3 rounded-full bg-white shadow-sm transition-transform ${
+                      teleprompterKeyboardEnabled
+                        ? "translate-x-3"
+                        : "translate-x-0"
+                    }`}
+                  />
+                </span>
+                同步
+              </button>
             </div>
           </div>
-
           <textarea
             ref={teleprompterTextRef}
             value={activeTeleprompterScript}
@@ -1718,7 +1793,11 @@ export function SlideRecorder({
             placeholder={
               "在此粘贴你的脚本...\n\n此文本仅对你可见，不会出现在录制中。"
             }
-            className="mt-3 h-[calc(100%-6.25rem)] w-full cursor-text resize-none bg-transparent px-5 pb-16 text-[22px] leading-10 text-zinc-800 outline-none placeholder:text-zinc-400"
+            className="mt-3 h-[calc(100%-7.5rem)] w-full cursor-text resize-none bg-transparent px-5 pb-16 text-zinc-800 outline-none placeholder:text-zinc-400"
+            style={{
+              fontSize: teleprompterFontSize,
+              lineHeight: `${Math.round(teleprompterFontSize * 1.55)}px`,
+            }}
           />
 
           <div
@@ -1799,33 +1878,6 @@ export function SlideRecorder({
             >
               +
             </button>
-            <button
-              type="button"
-              title={
-                teleprompterKeyboardEnabled
-                  ? "录制时左右键切换脚本页已开启"
-                  : "录制时左右键切换脚本页已关闭"
-              }
-              aria-label="录制时左右键切换脚本页"
-              aria-pressed={teleprompterKeyboardEnabled}
-              onClick={() =>
-                setTeleprompterKeyboardEnabled((current) => !current)
-              }
-              className={`relative ml-1 h-5 w-9 rounded-full transition ${
-                teleprompterKeyboardEnabled
-                  ? "bg-zinc-700"
-                  : "bg-zinc-200 hover:bg-zinc-300"
-              }`}
-            >
-              <span
-                className={`absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${
-                  teleprompterKeyboardEnabled ? "translate-x-4" : "translate-x-0"
-                }`}
-              />
-            </button>
-            <span className="whitespace-nowrap text-[11px] font-medium text-zinc-500">
-              幻灯片同步切换
-            </span>
           </div>
 
           <button
@@ -1958,7 +2010,7 @@ export function SlideRecorder({
                 />
                 {status === "recording" ? "正在录制" : "录制已暂停"}
               </p>
-              <p className="mt-1 whitespace-nowrap pl-[18px] text-[10px] leading-none text-zinc-400">
+              <p className="mt-1 whitespace-nowrap pl-[18px] text-[10px] font-semibold leading-none text-red-500">
                 使用 ← → 切换幻灯片
               </p>
             </div>

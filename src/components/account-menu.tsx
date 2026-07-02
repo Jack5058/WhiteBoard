@@ -47,6 +47,35 @@ type AccountMenuProps = {
   onEntitlementChange?: (paid: boolean) => void;
 };
 
+type WelcomeFeature = {
+  title: string;
+  description: string;
+  icon: "draw" | "slides" | "record" | "teleprompter";
+};
+
+const WELCOME_FEATURES: WelcomeFeature[] = [
+  {
+    title: "自由绘制想法",
+    description: "基于 Excalidraw 随手画图、写字、连线，把灵感快速铺到白板上。",
+    icon: "draw",
+  },
+  {
+    title: "幻灯片式创作",
+    description: "在设置区调整画面比例、背景和录制参数，用幻灯片组织多页内容。",
+    icon: "slides",
+  },
+  {
+    title: "便捷视频录制",
+    description: "同步录制白板、头像、声音和讲解过程，为自媒体内容制作省下复杂流程。",
+    icon: "record",
+  },
+  {
+    title: "隐形提词器",
+    description: "提词器支持滚动速度和页面切换，只对你可见，不会进入最终录制视频。",
+    icon: "teleprompter",
+  },
+];
+
 function getUserLabel(user: User) {
   return (
     user.user_metadata?.full_name ||
@@ -117,9 +146,15 @@ function MoneyIcon() {
 
 function WechatPayIcon() {
   return (
-    <span className="flex h-8 w-8 items-center justify-center rounded-full bg-[#1aad19] text-white">
-      <svg aria-hidden="true" viewBox="0 0 24 24" className="h-5 w-5" fill="currentColor">
-        <path d="M9.5 4C5.4 4 2.2 6.6 2.2 9.9c0 1.9 1.1 3.6 2.8 4.7l-.7 2.1 2.5-1.2c.8.2 1.7.4 2.7.4 4.1 0 7.3-2.6 7.3-5.9C16.8 6.6 13.6 4 9.5 4Zm-2.4 5.2a.9.9 0 1 1 0-1.8.9.9 0 0 1 0 1.8Zm4.7 0a.9.9 0 1 1 0-1.8.9.9 0 0 1 0 1.8Zm7.4 2.7c0-2.4-2.2-4.5-5.1-5.1.9.9 1.4 2 1.4 3.2 0 3.1-3 5.6-6.8 5.9 1 1.2 2.8 2 4.8 2 .7 0 1.4-.1 2.1-.3l2 1-.5-1.7c1.3-.9 2.1-2.1 2.1-3.6Zm-7.6-.3a.7.7 0 1 1 0-1.4.7.7 0 0 1 0 1.4Zm3.7 0a.7.7 0 1 1 0-1.4.7.7 0 0 1 0 1.4Z" />
+    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#07c160] text-white shadow-sm">
+      <svg
+        aria-hidden="true"
+        viewBox="0 0 32 32"
+        className="h-6 w-6"
+        fill="currentColor"
+      >
+        <path d="M13.7 6.5C8.4 6.5 4.2 9.8 4.2 14c0 2.3 1.3 4.4 3.4 5.8l-.8 2.6 3-1.5c1.2.4 2.5.6 3.9.6 5.3 0 9.5-3.3 9.5-7.5s-4.2-7.5-9.5-7.5Zm-3.1 6.2a1.2 1.2 0 1 1 0-2.4 1.2 1.2 0 0 1 0 2.4Zm6.2 0a1.2 1.2 0 1 1 0-2.4 1.2 1.2 0 0 1 0 2.4Z" />
+        <path d="M23 13.8c-.2 4.8-4.9 8.6-10.9 8.7 1.6 1.8 4.2 3 7.1 3 1.1 0 2.1-.2 3.1-.5l2.4 1.2-.7-2.1c2.3-1.4 3.7-3.5 3.7-5.8 0-2.1-1.2-4-3.2-5.4-.5.3-1 .6-1.5.9Zm-5 4.4a1 1 0 1 1 0-2 1 1 0 0 1 0 2Zm5 0a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z" />
       </svg>
     </span>
   );
@@ -127,15 +162,157 @@ function WechatPayIcon() {
 
 function AlipayIcon() {
   return (
-    <span className="flex h-8 w-8 items-center justify-center rounded-full bg-[#1677ff] text-white">
-      <svg aria-hidden="true" viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M6 7h12" />
-        <path d="M8 11h8" />
-        <path d="M12 4v7" />
-        <path d="M8 19c2.5-1.3 5.7-4.3 6.8-8" />
-        <path d="M6 15c4.2 3.5 8.2 4.6 12 4.7" />
+    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#1677ff] text-white shadow-sm">
+      <svg
+        aria-hidden="true"
+        viewBox="0 0 32 32"
+        className="h-6 w-6"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2.4"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <path d="M8 9h16" />
+        <path d="M10 14h12" />
+        <path d="M16 6v9" />
+        <path d="M10 25c4.7-2.2 8.2-6.2 9.3-11" />
+        <path d="M7.5 20.5c6.3 4.1 11.7 5.2 17 5.3" />
       </svg>
     </span>
+  );
+}
+
+function WelcomeSketchIcon({ type }: { type: WelcomeFeature["icon"] }) {
+  if (type === "draw") {
+    return (
+      <svg aria-hidden="true" viewBox="0 0 72 72" className="h-16 w-16">
+        <path d="M11 53c12-17 22-23 34-17 6 3 11 3 16-5" className="fill-none stroke-[#2f2a25] stroke-[2.7] [stroke-linecap:round] [stroke-linejoin:round]" />
+        <path d="M20 18h29c6 0 9 3 9 8v25c0 5-3 8-9 8H20c-6 0-9-3-9-8V26c0-5 3-8 9-8Z" className="fill-[#fff7d6] stroke-[#2f2a25] stroke-[2.2]" />
+        <path d="m43 15 10 10-25 25-12 3 3-12 24-26Z" className="fill-[#ffd166] stroke-[#2f2a25] stroke-[2.4] [stroke-linejoin:round]" />
+        <path d="m38 21 10 10M20 41l10 10" className="fill-none stroke-[#2f2a25] stroke-[2.1] [stroke-linecap:round]" />
+      </svg>
+    );
+  }
+
+  if (type === "slides") {
+    return (
+      <svg aria-hidden="true" viewBox="0 0 72 72" className="h-16 w-16">
+        <path d="M12 17h30v19H12zM25 36v14M18 50h28" className="fill-[#e9e7ff] stroke-[#2f2a25] stroke-[2.4] [stroke-linecap:round] [stroke-linejoin:round]" />
+        <path d="M45 25h13c3 0 5 2 5 5v20c0 3-2 5-5 5H35c-3 0-5-2-5-5v-7" className="fill-[#fff7d6] stroke-[#2f2a25] stroke-[2.2] [stroke-linejoin:round]" />
+        <path d="M47 33v14M40 40h14" className="fill-none stroke-[#6965db] stroke-[3] [stroke-linecap:round]" />
+        <path d="M17 24h17M17 30h11" className="fill-none stroke-[#2f2a25] stroke-[2] [stroke-linecap:round]" />
+      </svg>
+    );
+  }
+
+  if (type === "record") {
+    return (
+      <svg aria-hidden="true" viewBox="0 0 72 72" className="h-16 w-16">
+        <path d="M13 19h34c4 0 7 3 7 7v21c0 4-3 7-7 7H13c-4 0-7-3-7-7V26c0-4 3-7 7-7Z" className="fill-[#fff0f0] stroke-[#2f2a25] stroke-[2.3]" />
+        <path d="m54 31 12-7v26l-12-7Z" className="fill-[#ff6b6b] stroke-[#2f2a25] stroke-[2.2] [stroke-linejoin:round]" />
+        <circle cx="27" cy="36" r="9" className="fill-[#ff6b6b] stroke-[#2f2a25] stroke-[2.3]" />
+        <path d="M23 32c3-3 7-3 10 0M22 44c4-4 10-4 14 0" className="fill-none stroke-white stroke-[2.2] [stroke-linecap:round]" />
+      </svg>
+    );
+  }
+
+  return (
+    <svg aria-hidden="true" viewBox="0 0 72 72" className="h-16 w-16">
+      <path d="M13 15h46c4 0 7 3 7 7v28c0 4-3 7-7 7H13c-4 0-7-3-7-7V22c0-4 3-7 7-7Z" className="fill-[#e8fff2] stroke-[#2f2a25] stroke-[2.3]" />
+      <path d="M18 28h31M18 36h37M18 44h24" className="fill-none stroke-[#2f2a25] stroke-[2.3] [stroke-linecap:round]" />
+      <path d="m55 29 5 5-5 5M50 47l-5-5 5-5" className="fill-none stroke-[#1aad19] stroke-[2.8] [stroke-linecap:round] [stroke-linejoin:round]" />
+      <path d="M10 61c17-3 35-3 52 0" className="fill-none stroke-[#2f2a25] stroke-[2] [stroke-linecap:round] [stroke-dasharray:4_6]" />
+    </svg>
+  );
+}
+
+function WelcomeModal({
+  onClose,
+  onLogin,
+}: {
+  onClose: () => void;
+  onLogin: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-[110] flex items-center justify-center bg-[#171717]/35 p-4 backdrop-blur-[2px]">
+      <section
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="welcome-dialog-title"
+        className="relative w-full max-w-[780px] overflow-hidden rounded-[28px] border-2 border-[#2f2a25]/80 bg-[#fffdf7] p-6 text-zinc-900 shadow-[8px_10px_0_rgba(47,42,37,0.18),0_28px_80px_rgba(15,23,42,0.26)] sm:p-8"
+      >
+        <button
+          type="button"
+          aria-label="关闭欢迎页"
+          onClick={onClose}
+          className="absolute top-4 right-4 flex h-9 w-9 items-center justify-center rounded-xl border border-[#2f2a25]/15 bg-white/75 text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-900"
+        >
+          <CloseIcon />
+        </button>
+
+        <div className="pointer-events-none absolute -top-12 -right-12 h-40 w-40 rounded-full border-2 border-dashed border-[#6965db]/35" />
+        <div className="pointer-events-none absolute -bottom-14 -left-10 h-36 w-36 rounded-full border-2 border-dashed border-[#ffb703]/45" />
+
+        <div className="relative">
+          <p className="mb-3 inline-flex rounded-full border border-[#2f2a25]/15 bg-[#fff7d6] px-3 py-1 text-xs font-semibold text-[#6b4f00]">
+            WhiteBoard 创作白板
+          </p>
+          <h2
+            id="welcome-dialog-title"
+            className="text-3xl font-bold tracking-tight text-zinc-950 sm:text-4xl"
+          >
+            欢迎来到 WhiteBoard
+          </h2>
+          <p className="mt-3 max-w-[620px] text-sm leading-7 text-zinc-600 sm:text-base">
+            把想法、幻灯片、录制和讲稿放进同一个白板工作流，从灵感草图一路走到视频内容。
+          </p>
+
+          <div className="mt-7 grid gap-4 sm:grid-cols-2">
+            {WELCOME_FEATURES.map((feature) => (
+              <article
+                key={feature.title}
+                className="group relative rounded-[22px] border-2 border-[#2f2a25]/75 bg-white p-4 shadow-[4px_5px_0_rgba(47,42,37,0.12)] transition hover:-translate-y-0.5 hover:shadow-[5px_7px_0_rgba(47,42,37,0.14)]"
+              >
+                <div className="flex gap-4">
+                  <div className="shrink-0 rotate-[-2deg] transition group-hover:rotate-0">
+                    <WelcomeSketchIcon type={feature.icon} />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-bold text-zinc-950">{feature.title}</h3>
+                    <p className="mt-2 text-sm leading-6 text-zinc-600">
+                      {feature.description}
+                    </p>
+                  </div>
+                </div>
+              </article>
+            ))}
+          </div>
+
+          <div className="mt-7 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-xs text-zinc-500">
+              未登录时刷新或重新打开网站会再次显示，你也可以直接开始创作。
+            </p>
+            <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={onClose}
+                className="h-11 rounded-xl border-2 border-[#2f2a25]/75 bg-white px-5 text-sm font-bold text-zinc-900 shadow-[3px_4px_0_rgba(47,42,37,0.12)] transition hover:-translate-y-0.5"
+              >
+                开始创作
+              </button>
+              <button
+                type="button"
+                onClick={onLogin}
+                className="h-11 rounded-xl border-2 border-[#2f2a25]/75 bg-[#6965db] px-5 text-sm font-bold text-white shadow-[3px_4px_0_rgba(47,42,37,0.18)] transition hover:-translate-y-0.5 hover:bg-[#5b57d1]"
+              >
+                登录 / 注册
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
   );
 }
 
@@ -150,6 +327,7 @@ export function AccountMenu({ onEntitlementChange }: AccountMenuProps) {
   const [phoneOtp, setPhoneOtp] = useState("");
   const [awaitingPhoneOtp, setAwaitingPhoneOtp] = useState(false);
   const [user, setUser] = useState<User | null>(null);
+  const [showWelcome, setShowWelcome] = useState(false);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [paid, setPaid] = useState(false);
@@ -190,6 +368,16 @@ export function AccountMenu({ onEntitlementChange }: AccountMenuProps) {
     setOpen(false);
     resetForm();
   }, [resetForm]);
+
+  const dismissWelcome = useCallback(() => {
+    setShowWelcome(false);
+  }, []);
+
+  const openLoginFromWelcome = useCallback(() => {
+    dismissWelcome();
+    resetForm("login");
+    setOpen(true);
+  }, [dismissWelcome, resetForm]);
 
   const updatePosition = useCallback(() => {
     const menu = document.querySelector<HTMLElement>(
@@ -239,9 +427,19 @@ export function AccountMenu({ onEntitlementChange }: AccountMenuProps) {
   }, [supabase, updatePaidState]);
 
   useEffect(() => {
+    if (!supabase) {
+      const frame = window.requestAnimationFrame(() => setShowWelcome(true));
+      return () => window.cancelAnimationFrame(frame);
+    }
+
     void supabase?.auth.getUser().then(({ data }) => {
       setUser(data.user);
-      if (data.user) void refreshEntitlement();
+      if (data.user) {
+        setShowWelcome(false);
+        void refreshEntitlement();
+        return;
+      }
+      setShowWelcome(true);
     });
 
     const authSubscription = supabase?.auth.onAuthStateChange((event, session) => {
@@ -257,6 +455,7 @@ export function AccountMenu({ onEntitlementChange }: AccountMenuProps) {
         return;
       }
       if (session?.user) {
+        setShowWelcome(false);
         setOpen(false);
         resetForm();
         void refreshEntitlement();
@@ -762,6 +961,10 @@ export function AccountMenu({ onEntitlementChange }: AccountMenuProps) {
         </button>
       </div>
 
+      {showWelcome && !user && (
+        <WelcomeModal onClose={dismissWelcome} onLogin={openLoginFromWelcome} />
+      )}
+
       {open && (
         <div
           className="fixed inset-0 z-[100] flex items-center justify-center bg-black/35 p-4 backdrop-blur-[2px]"
@@ -805,6 +1008,9 @@ export function AccountMenu({ onEntitlementChange }: AccountMenuProps) {
                 >
                   {loading ? "正在退出..." : "退出登录"}
                 </button>
+                <p className="mt-3 text-xs leading-5 text-zinc-400">
+                  有任何问题欢迎发送邮件到 648998480@qq.com
+                </p>
               </div>
             ) : (
               <>
