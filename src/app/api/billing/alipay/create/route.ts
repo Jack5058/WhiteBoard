@@ -9,6 +9,33 @@ import { createAlipayPagePayUrl, getAlipayConfig } from "@/lib/alipay";
 
 export const runtime = "edge";
 
+function getErrorMessage(error: unknown) {
+  if (error instanceof Error) {
+    return `${error.name}: ${error.message}`;
+  }
+
+  if (error && typeof error === "object") {
+    const record = error as Record<string, unknown>;
+    const name = typeof record.name === "string" ? record.name : "";
+    const message = typeof record.message === "string" ? record.message : "";
+    const code =
+      typeof record.code === "string" || typeof record.code === "number"
+        ? `code=${record.code}`
+        : "";
+    const details = [name, message, code].filter(Boolean).join(": ");
+
+    if (details) return details;
+
+    try {
+      return JSON.stringify(record);
+    } catch {
+      return Object.prototype.toString.call(error);
+    }
+  }
+
+  return String(error);
+}
+
 export async function POST(request: Request) {
   try {
     const { user, admin } = await getAuthenticatedUser(request);
@@ -74,7 +101,8 @@ export async function POST(request: Request) {
 
     return Response.json({ url: paymentUrl });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "未知错误";
+    const message = getErrorMessage(error);
+    console.error("Alipay order creation failed", error);
     return Response.json(
       { message: `创建支付宝订单异常：${message}` },
       { status: 500 },

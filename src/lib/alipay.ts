@@ -13,7 +13,7 @@ type AlipayConfig = {
 type AlipaySignParams = Record<string, string>;
 
 function normalizePemKey(key: string, label: "PRIVATE KEY" | "PUBLIC KEY") {
-  const trimmed = key.trim().replace(/\\n/g, "\n");
+  const trimmed = key.trim().replace(/^['"]|['"]$/g, "").replace(/\\n/g, "\n");
   if (trimmed.includes("-----BEGIN")) {
     return trimmed;
   }
@@ -27,6 +27,11 @@ function pemToArrayBuffer(pem: string) {
     .replace(/-----BEGIN [^-]+-----/g, "")
     .replace(/-----END [^-]+-----/g, "")
     .replace(/\s+/g, "");
+  if (!/^[A-Za-z0-9+/=]+$/.test(base64)) {
+    throw new Error(
+      "Alipay key contains invalid characters. Check that the environment variable has no quotes, spaces, or extra text.",
+    );
+  }
   const binary = atob(base64);
   const bytes = new Uint8Array(binary.length);
 
