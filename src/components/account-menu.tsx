@@ -157,6 +157,7 @@ export function AccountMenu({ onEntitlementChange }: AccountMenuProps) {
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("wechat");
   const [paymentLoading, setPaymentLoading] = useState(false);
   const [paymentMessage, setPaymentMessage] = useState<string | null>(null);
+  const [wechatCodeUrl, setWechatCodeUrl] = useState<string | null>(null);
   const supabase = useMemo(() => getSupabaseClient(), []);
   const accountInputRef = useRef<HTMLInputElement>(null);
   const selectedPayment = useMemo(
@@ -536,11 +537,62 @@ export function AccountMenu({ onEntitlementChange }: AccountMenuProps) {
 
     setPaymentMessage(paid ? "当前账号已拥有永久使用权益。" : null);
     setPaymentMethod("wechat");
+    setWechatCodeUrl(null);
     setPaymentOpen(true);
   }, [paid, resetForm, user]);
 
   const openSelectedPayment = useCallback(async () => {
     if (paid) return;
+
+    if (selectedPayment.id === "wechat") {
+      if (!supabase) {
+        setPaymentMessage("请先配置 Supabase 环境变量。");
+        return;
+      }
+
+      setPaymentLoading(true);
+      setPaymentMessage(null);
+      setWechatCodeUrl(null);
+      const { data } = await supabase.auth.getSession();
+      const accessToken = data.session?.access_token;
+      if (!accessToken) {
+        setPaymentLoading(false);
+        setPaymentOpen(false);
+        resetForm("login");
+        setMessage("登录状态已失效，请重新登录。");
+        setOpen(true);
+        return;
+      }
+
+      try {
+        const response = await fetch("/api/billing/wechat/create", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${accessToken}` },
+        });
+        const result = (await response.json()) as {
+          codeUrl?: string;
+          paid?: boolean;
+          message?: string;
+        };
+
+        if (result.paid) {
+          updatePaidState(true);
+          setPaymentMessage("当前账号已拥有永久使用权益。");
+          return;
+        }
+        if (!response.ok || !result.codeUrl) {
+          setPaymentMessage(result.message || "创建微信支付订单失败，请稍后重试。");
+          return;
+        }
+        setWechatCodeUrl(result.codeUrl);
+        setPaymentMessage("请使用微信扫描二维码完成 ¥49.90 支付。支付成功后会员会自动开通。");
+      } catch {
+        setPaymentMessage("无法连接微信支付服务，请稍后重试。");
+      } finally {
+        setPaymentLoading(false);
+      }
+      return;
+    }
 
     if (selectedPayment.id === "alipay") {
       if (!supabase) {
@@ -608,6 +660,23 @@ export function AccountMenu({ onEntitlementChange }: AccountMenuProps) {
     );
   }, [paid, resetForm, selectedPayment, supabase, updatePaidState]);
 
+  useEffect(() => {
+    if (!paymentOpen || paymentMethod !== "wechat" || !wechatCodeUrl || paid) {
+      return;
+    }
+
+    const timer = window.setInterval(() => {
+      void refreshEntitlement().then((isPaid) => {
+        if (isPaid) {
+          setWechatCodeUrl(null);
+          setPaymentMessage("永久会员已开通，感谢支持！");
+        }
+      });
+    }, 3000);
+
+    return () => window.clearInterval(timer);
+  }, [paid, paymentMethod, paymentOpen, refreshEntitlement, wechatCodeUrl]);
+
   const refreshPaymentStatus = useCallback(async () => {
     setPaymentMessage("正在刷新权益状态...");
     const isPaid = await refreshEntitlement();
@@ -624,14 +693,18 @@ export function AccountMenu({ onEntitlementChange }: AccountMenuProps) {
   const isResetPassword = view === "reset";
   const isUpdatingPassword = view === "updatePassword";
   const selectedPaymentDescription =
-    selectedPayment.id === "alipay"
+    selectedPayment.id === "wechat"
+      ? "点击下方按钮创建微信支付订单，然后使用微信扫码完成付款。"
+      : selectedPayment.id === "alipay"
       ? "点击下方按钮进入支付宝官方收银台，支付成功后会员会自动开通。"
       : selectedPayment.url
         ? `点击下方按钮打开${selectedPayment.name}付款链接。`
         : `请配置 ${selectedPayment.urlEnv} 或 ${selectedPayment.qrEnv} 后启用${selectedPayment.name}。`;
   const selectedPaymentButtonLabel = paymentLoading
     ? "正在创建订单..."
-    : selectedPayment.id === "alipay"
+    : selectedPayment.id === "wechat"
+      ? "微信支付 ¥49.90"
+      : selectedPayment.id === "alipay"
       ? "支付宝支付 ¥49.90"
       : selectedPayment.url
         ? `打开${selectedPayment.name}`
@@ -1009,6 +1082,7 @@ export function AccountMenu({ onEntitlementChange }: AccountMenuProps) {
                         onClick={() => {
                           setPaymentMethod(option.id);
                           setPaymentMessage(null);
+                          setWechatCodeUrl(null);
                         }}
                         className={`flex items-center gap-3 rounded-2xl border p-3 text-left transition ${
                           active
@@ -1027,7 +1101,19 @@ export function AccountMenu({ onEntitlementChange }: AccountMenuProps) {
                 </div>
 
                 <div className="rounded-2xl border border-dashed border-zinc-200 bg-zinc-50 px-4 py-4 text-center">
-                  {selectedPayment.qrUrl ? (
+                  {selectedPayment.id === "wechat" && wechatCodeUrl ? (
+                    <>
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={`https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(wechatCodeUrl)}`}
+                        alt="微信支付二维码"
+                        className="mx-auto h-40 w-40 rounded-xl bg-white object-contain p-2 shadow-sm"
+                      />
+                      <p className="mt-3 text-sm text-zinc-600">
+                        使用微信扫码支付 ¥49.90。
+                      </p>
+                    </>
+                  ) : selectedPayment.qrUrl ? (
                     <>
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img
