@@ -47,31 +47,73 @@ type AccountMenuProps = {
   onEntitlementChange?: (paid: boolean) => void;
 };
 
-type WelcomeFeature = {
+type WelcomePage = {
+  badge: string;
   title: string;
   description: string;
-  icon: "draw" | "slides" | "record" | "teleprompter";
+  points: string[];
+  icon: "overview" | "draw" | "slides" | "record" | "teleprompter";
 };
 
-const WELCOME_FEATURES: WelcomeFeature[] = [
+const WELCOME_PAGES: WelcomePage[] = [
   {
-    title: "自由绘制想法",
-    description: "基于 Excalidraw 随手画图、写字、连线，把灵感快速铺到白板上。",
+    badge: "WhiteBoard 是什么",
+    title: "把白板、幻灯片和录制放在一起",
+    description:
+      "WhiteBoard 是一个面向讲解、课程、自媒体脚本和灵感整理的创作白板。你可以先在白板上自由组织内容，再把它录制成视频。",
+    points: [
+      "适合做知识讲解、产品演示、课程草稿和短视频脚本。",
+      "无需在多个软件之间来回切换，绘制、排版、讲解和录制都在同一页完成。",
+      "登录后，白板内容会保存到账号中，刷新或下次登录后继续编辑。",
+    ],
+    icon: "overview",
+  },
+  {
+    badge: "功能 1",
+    title: "自由绘制你的想法",
+    description:
+      "网站基于 Excalidraw，你可以像在纸上一样画框、写字、连线、涂鸦，把想法快速铺开。",
+    points: [
+      "使用顶部工具栏选择画笔、文本、箭头、形状等工具。",
+      "可以把零散想法画成结构图、流程图或讲解草稿。",
+      "登录后绘制内容会自动保存，刷新页面也能恢复。",
+    ],
     icon: "draw",
   },
   {
-    title: "幻灯片式创作",
-    description: "在设置区调整画面比例、背景和录制参数，用幻灯片组织多页内容。",
+    badge: "功能 2",
+    title: "用幻灯片组织多页内容",
+    description:
+      "通过底部幻灯片导航新增页面，每个幻灯片都是一个画框，适合把复杂内容拆成多个讲解步骤。",
+    points: [
+      "点击底部加号新增幻灯片页面。",
+      "在设置中选择画面比例、录制背景、圆角、边距和摄像头样式。",
+      "录制或演示时可用左右方向键切换幻灯片。",
+    ],
     icon: "slides",
   },
   {
-    title: "便捷视频录制",
-    description: "同步录制白板、头像、声音和讲解过程，为自媒体内容制作省下复杂流程。",
+    badge: "功能 3",
+    title: "直接录制讲解视频",
+    description:
+      "你可以把当前白板区域录制成视频，同时录入摄像头画面、麦克风声音和讲解过程。",
+    points: [
+      "点击录制按钮后，可以拖动和调整录制区域。",
+      "开启摄像头和麦克风后，头像、声音和白板内容会同步进入视频。",
+      "未付费账号导出视频会带试用版水印，开通后可去除水印。",
+    ],
     icon: "record",
   },
   {
-    title: "隐形提词器",
-    description: "提词器支持滚动速度和页面切换，只对你可见，不会进入最终录制视频。",
+    badge: "功能 4",
+    title: "用隐形提词器辅助讲解",
+    description:
+      "提词器只对你可见，不会被录进最终视频，适合准备讲稿、关键词和每页讲解节奏。",
+    points: [
+      "点击录制导航栏左侧的提词器按钮打开脚本窗口。",
+      "可以设置滚动速度、透明度、字体大小，并按脚本页管理内容。",
+      "开启同步后，录制时左右方向键可以同时切换幻灯片和脚本页。",
+    ],
     icon: "teleprompter",
   },
 ];
@@ -183,10 +225,43 @@ function AlipayIcon() {
   );
 }
 
-function WelcomeSketchIcon({ type }: { type: WelcomeFeature["icon"] }) {
+function WelcomeSketchIcon({ type }: { type: WelcomePage["icon"] }) {
+  if (type === "overview") {
+    return (
+      <svg aria-hidden="true" viewBox="0 0 96 96" className="h-36 w-36">
+        <path
+          d="M15 18h48c6 0 10 4 10 10v35c0 6-4 10-10 10H15C9 73 5 69 5 63V28c0-6 4-10 10-10Z"
+          className="fill-[#fff7d6] stroke-[#2f2a25] stroke-[2.8]"
+        />
+        <path
+          d="M18 34h24M18 44h34M18 54h20"
+          className="fill-none stroke-[#2f2a25] stroke-[2.3] [stroke-linecap:round]"
+        />
+        <path
+          d="M62 38h20c5 0 8 3 8 8v21c0 5-3 8-8 8H62c-5 0-8-3-8-8V46c0-5 3-8 8-8Z"
+          className="fill-[#e9e7ff] stroke-[#2f2a25] stroke-[2.6]"
+        />
+        <path
+          d="m78 53 8-5v18l-8-5Z"
+          className="fill-[#ff6b6b] stroke-[#2f2a25] stroke-[2.3] [stroke-linejoin:round]"
+        />
+        <circle
+          cx="67"
+          cy="57"
+          r="7"
+          className="fill-[#ff6b6b] stroke-[#2f2a25] stroke-[2.3]"
+        />
+        <path
+          d="M29 77c12 5 27 5 39 0"
+          className="fill-none stroke-[#2f2a25] stroke-[2.2] [stroke-linecap:round] [stroke-dasharray:4_6]"
+        />
+      </svg>
+    );
+  }
+
   if (type === "draw") {
     return (
-      <svg aria-hidden="true" viewBox="0 0 72 72" className="h-16 w-16">
+      <svg aria-hidden="true" viewBox="0 0 72 72" className="h-36 w-36">
         <path d="M11 53c12-17 22-23 34-17 6 3 11 3 16-5" className="fill-none stroke-[#2f2a25] stroke-[2.7] [stroke-linecap:round] [stroke-linejoin:round]" />
         <path d="M20 18h29c6 0 9 3 9 8v25c0 5-3 8-9 8H20c-6 0-9-3-9-8V26c0-5 3-8 9-8Z" className="fill-[#fff7d6] stroke-[#2f2a25] stroke-[2.2]" />
         <path d="m43 15 10 10-25 25-12 3 3-12 24-26Z" className="fill-[#ffd166] stroke-[#2f2a25] stroke-[2.4] [stroke-linejoin:round]" />
@@ -197,7 +272,7 @@ function WelcomeSketchIcon({ type }: { type: WelcomeFeature["icon"] }) {
 
   if (type === "slides") {
     return (
-      <svg aria-hidden="true" viewBox="0 0 72 72" className="h-16 w-16">
+      <svg aria-hidden="true" viewBox="0 0 72 72" className="h-36 w-36">
         <path d="M12 17h30v19H12zM25 36v14M18 50h28" className="fill-[#e9e7ff] stroke-[#2f2a25] stroke-[2.4] [stroke-linecap:round] [stroke-linejoin:round]" />
         <path d="M45 25h13c3 0 5 2 5 5v20c0 3-2 5-5 5H35c-3 0-5-2-5-5v-7" className="fill-[#fff7d6] stroke-[#2f2a25] stroke-[2.2] [stroke-linejoin:round]" />
         <path d="M47 33v14M40 40h14" className="fill-none stroke-[#6965db] stroke-[3] [stroke-linecap:round]" />
@@ -208,7 +283,7 @@ function WelcomeSketchIcon({ type }: { type: WelcomeFeature["icon"] }) {
 
   if (type === "record") {
     return (
-      <svg aria-hidden="true" viewBox="0 0 72 72" className="h-16 w-16">
+      <svg aria-hidden="true" viewBox="0 0 72 72" className="h-36 w-36">
         <path d="M13 19h34c4 0 7 3 7 7v21c0 4-3 7-7 7H13c-4 0-7-3-7-7V26c0-4 3-7 7-7Z" className="fill-[#fff0f0] stroke-[#2f2a25] stroke-[2.3]" />
         <path d="m54 31 12-7v26l-12-7Z" className="fill-[#ff6b6b] stroke-[#2f2a25] stroke-[2.2] [stroke-linejoin:round]" />
         <circle cx="27" cy="36" r="9" className="fill-[#ff6b6b] stroke-[#2f2a25] stroke-[2.3]" />
@@ -218,7 +293,7 @@ function WelcomeSketchIcon({ type }: { type: WelcomeFeature["icon"] }) {
   }
 
   return (
-    <svg aria-hidden="true" viewBox="0 0 72 72" className="h-16 w-16">
+    <svg aria-hidden="true" viewBox="0 0 72 72" className="h-36 w-36">
       <path d="M13 15h46c4 0 7 3 7 7v28c0 4-3 7-7 7H13c-4 0-7-3-7-7V22c0-4 3-7 7-7Z" className="fill-[#e8fff2] stroke-[#2f2a25] stroke-[2.3]" />
       <path d="M18 28h31M18 36h37M18 44h24" className="fill-none stroke-[#2f2a25] stroke-[2.3] [stroke-linecap:round]" />
       <path d="m55 29 5 5-5 5M50 47l-5-5 5-5" className="fill-none stroke-[#1aad19] stroke-[2.8] [stroke-linecap:round] [stroke-linejoin:round]" />
@@ -234,19 +309,28 @@ function WelcomeModal({
   onClose: () => void;
   onLogin: () => void;
 }) {
+  const [pageIndex, setPageIndex] = useState(0);
+  const page = WELCOME_PAGES[pageIndex];
+  const isFirstPage = pageIndex === 0;
+  const isLastPage = pageIndex === WELCOME_PAGES.length - 1;
+  const goToPrevious = () =>
+    setPageIndex((current) => Math.max(0, current - 1));
+  const goToNext = () =>
+    setPageIndex((current) => Math.min(WELCOME_PAGES.length - 1, current + 1));
+
   return (
     <div className="fixed inset-0 z-[110] flex items-center justify-center bg-[#171717]/35 p-4 backdrop-blur-[2px]">
       <section
         role="dialog"
         aria-modal="true"
         aria-labelledby="welcome-dialog-title"
-        className="relative w-full max-w-[780px] overflow-hidden rounded-[28px] border-2 border-[#2f2a25]/80 bg-[#fffdf7] p-6 text-zinc-900 shadow-[8px_10px_0_rgba(47,42,37,0.18),0_28px_80px_rgba(15,23,42,0.26)] sm:p-8"
+        className="group relative w-full max-w-[860px] overflow-hidden rounded-[28px] border-2 border-[#2f2a25]/80 bg-[#fffdf7] p-5 text-zinc-900 shadow-[8px_10px_0_rgba(47,42,37,0.18),0_28px_80px_rgba(15,23,42,0.26)] sm:p-7"
       >
         <button
           type="button"
           aria-label="关闭欢迎页"
           onClick={onClose}
-          className="absolute top-4 right-4 flex h-9 w-9 items-center justify-center rounded-xl border border-[#2f2a25]/15 bg-white/75 text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-900"
+          className="absolute top-4 right-4 z-30 flex h-10 w-10 items-center justify-center rounded-xl border border-[#2f2a25]/15 bg-white/90 text-zinc-500 shadow-sm transition hover:bg-zinc-100 hover:text-zinc-900"
         >
           <CloseIcon />
         </button>
@@ -254,60 +338,133 @@ function WelcomeModal({
         <div className="pointer-events-none absolute -top-12 -right-12 h-40 w-40 rounded-full border-2 border-dashed border-[#6965db]/35" />
         <div className="pointer-events-none absolute -bottom-14 -left-10 h-36 w-36 rounded-full border-2 border-dashed border-[#ffb703]/45" />
 
-        <div className="relative">
-          <p className="mb-3 inline-flex rounded-full border border-[#2f2a25]/15 bg-[#fff7d6] px-3 py-1 text-xs font-semibold text-[#6b4f00]">
-            WhiteBoard 创作白板
-          </p>
-          <h2
-            id="welcome-dialog-title"
-            className="text-3xl font-bold tracking-tight text-zinc-950 sm:text-4xl"
+        {!isFirstPage && (
+          <button
+            type="button"
+            aria-label="上一页"
+            onClick={goToPrevious}
+            className="absolute left-3 top-1/2 z-10 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full border-2 border-[#2f2a25]/70 bg-white/80 text-zinc-800 opacity-20 shadow-[3px_4px_0_rgba(47,42,37,0.12)] backdrop-blur transition hover:-translate-x-0.5 hover:bg-white hover:opacity-100 group-hover:opacity-75"
           >
-            欢迎来到 WhiteBoard
-          </h2>
-          <p className="mt-3 max-w-[620px] text-sm leading-7 text-zinc-600 sm:text-base">
-            把想法、幻灯片、录制和讲稿放进同一个白板工作流，从灵感草图一路走到视频内容。
-          </p>
+            <svg
+              aria-hidden="true"
+              viewBox="0 0 24 24"
+              className="h-5 w-5"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="m15 6-6 6 6 6" />
+            </svg>
+          </button>
+        )}
 
-          <div className="mt-7 grid gap-4 sm:grid-cols-2">
-            {WELCOME_FEATURES.map((feature) => (
-              <article
-                key={feature.title}
-                className="group relative rounded-[22px] border-2 border-[#2f2a25]/75 bg-white p-4 shadow-[4px_5px_0_rgba(47,42,37,0.12)] transition hover:-translate-y-0.5 hover:shadow-[5px_7px_0_rgba(47,42,37,0.14)]"
-              >
-                <div className="flex gap-4">
-                  <div className="shrink-0 rotate-[-2deg] transition group-hover:rotate-0">
-                    <WelcomeSketchIcon type={feature.icon} />
-                  </div>
-                  <div>
-                    <h3 className="text-base font-bold text-zinc-950">{feature.title}</h3>
-                    <p className="mt-2 text-sm leading-6 text-zinc-600">
-                      {feature.description}
-                    </p>
-                  </div>
-                </div>
-              </article>
-            ))}
+        {!isLastPage && (
+          <button
+            type="button"
+            aria-label="下一页"
+            onClick={goToNext}
+            className="absolute right-3 top-1/2 z-10 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full border-2 border-[#2f2a25]/70 bg-white/80 text-zinc-800 opacity-20 shadow-[3px_4px_0_rgba(47,42,37,0.12)] backdrop-blur transition hover:translate-x-0.5 hover:bg-white hover:opacity-100 group-hover:opacity-75"
+          >
+            <svg
+              aria-hidden="true"
+              viewBox="0 0 24 24"
+              className="h-5 w-5"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="m9 6 6 6-6 6" />
+            </svg>
+          </button>
+        )}
+
+        <div className="relative">
+          <div className="mb-5 flex items-center justify-between gap-4 pr-12">
+            <p className="inline-flex rounded-full border border-[#2f2a25]/15 bg-[#fff7d6] px-3 py-1 text-xs font-semibold text-[#6b4f00]">
+              {page.badge}
+            </p>
+            <p className="text-xs font-medium text-zinc-400">
+              {pageIndex + 1} / {WELCOME_PAGES.length}
+            </p>
           </div>
 
-          <div className="mt-7 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <p className="text-xs text-zinc-500">
-              未登录时刷新或重新打开网站会再次显示，你也可以直接开始创作。
-            </p>
-            <div className="flex gap-3">
-              <button
-                type="button"
-                onClick={onClose}
-                className="h-11 rounded-xl border-2 border-[#2f2a25]/75 bg-white px-5 text-sm font-bold text-zinc-900 shadow-[3px_4px_0_rgba(47,42,37,0.12)] transition hover:-translate-y-0.5"
+          <div className="grid h-[430px] items-center gap-8 px-7 md:grid-cols-[0.9fr_1.1fr]">
+            <div className="flex justify-center">
+              <div className="relative flex h-64 w-full max-w-[280px] rotate-[-1.5deg] items-center justify-center rounded-[30px] border-2 border-[#2f2a25]/75 bg-white shadow-[6px_7px_0_rgba(47,42,37,0.12)]">
+                <div className="absolute left-6 top-6 h-3 w-3 rounded-full bg-[#ff6b6b]" />
+                <div className="absolute left-12 top-6 h-3 w-3 rounded-full bg-[#ffd166]" />
+                <div className="absolute left-[72px] top-6 h-3 w-3 rounded-full bg-[#69db7c]" />
+                <WelcomeSketchIcon type={page.icon} />
+              </div>
+            </div>
+
+            <div>
+              <h2
+                id="welcome-dialog-title"
+                className="text-3xl font-bold tracking-tight text-zinc-950 sm:text-4xl"
               >
-                开始创作
-              </button>
-              <button
-                type="button"
-                onClick={onLogin}
-                className="h-11 rounded-xl border-2 border-[#2f2a25]/75 bg-[#6965db] px-5 text-sm font-bold text-white shadow-[3px_4px_0_rgba(47,42,37,0.18)] transition hover:-translate-y-0.5 hover:bg-[#5b57d1]"
-              >
-                登录 / 注册
-              </button>
+                {page.title}
+              </h2>
+              <p className="mt-4 text-sm leading-7 text-zinc-600 sm:text-base">
+                {page.description}
+              </p>
+
+              <div className="mt-6 space-y-3">
+                {page.points.map((point, index) => (
+                  <div
+                    key={point}
+                    className="flex gap-3 rounded-2xl border-2 border-[#2f2a25]/60 bg-white/80 px-4 py-3 shadow-[3px_4px_0_rgba(47,42,37,0.08)]"
+                  >
+                    <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[#6965db] text-xs font-bold text-white">
+                      {index + 1}
+                    </span>
+                    <p className="text-sm leading-6 text-zinc-700">{point}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-5 flex flex-col gap-4 border-t border-[#2f2a25]/10 pt-5">
+            <div className="flex items-center justify-center">
+              <div className="flex items-center justify-center gap-2">
+                {WELCOME_PAGES.map((item, index) => (
+                  <button
+                    key={item.title}
+                    type="button"
+                    aria-label={`切换到第 ${index + 1} 页`}
+                    onClick={() => setPageIndex(index)}
+                    className={`h-2.5 rounded-full transition ${
+                      index === pageIndex
+                        ? "w-7 bg-[#6965db]"
+                        : "w-2.5 bg-zinc-300 hover:bg-zinc-400"
+                    }`}
+                  />
+                ))}
+              </div>
+            </div>
+
+            <div className="flex justify-center">
+              <div className="flex gap-3">
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="h-11 rounded-xl border-2 border-[#2f2a25]/75 bg-white px-5 text-sm font-bold text-zinc-900 shadow-[3px_4px_0_rgba(47,42,37,0.12)] transition hover:-translate-y-0.5"
+                >
+                  开始创作
+                </button>
+                <button
+                  type="button"
+                  onClick={onLogin}
+                  className="h-11 rounded-xl border-2 border-[#2f2a25]/75 bg-[#6965db] px-5 text-sm font-bold text-white shadow-[3px_4px_0_rgba(47,42,37,0.18)] transition hover:-translate-y-0.5 hover:bg-[#5b57d1]"
+                >
+                  登录 / 注册
+                </button>
+              </div>
             </div>
           </div>
         </div>
