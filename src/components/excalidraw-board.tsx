@@ -4,7 +4,11 @@ import type {
   ExcalidrawElement,
   ExcalidrawFrameElement,
 } from "@excalidraw/excalidraw/element/types";
-import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
+import type {
+  AppState,
+  BinaryFiles,
+  ExcalidrawImperativeAPI,
+} from "@excalidraw/excalidraw/types";
 import dynamic from "next/dynamic";
 import type { PointerEvent as ReactPointerEvent, WheelEvent } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -17,6 +21,7 @@ import {
 import { RecordingSettingsPanel } from "@/components/recording-settings-panel";
 import { SlideRecorder } from "@/components/slide-recorder";
 import { AccountMenu } from "@/components/account-menu";
+import { getSupabaseClient } from "@/lib/supabase";
 
 const Excalidraw = dynamic(
   async () => {
@@ -35,11 +40,24 @@ const Excalidraw = dynamic(
 );
 
 const SLIDE_GAP = 160;
+const SCENE_SAVE_DELAY_MS = 900;
 
 type Slide = Pick<
   ExcalidrawFrameElement,
   "id" | "name" | "x" | "y" | "width" | "height"
 >;
+
+type PersistedWhiteboardScene = {
+  elements: readonly ExcalidrawElement[];
+  appState: Pick<AppState, "viewBackgroundColor">;
+  files: BinaryFiles;
+};
+
+type PendingSceneSave = {
+  userId: string;
+  scene: PersistedWhiteboardScene;
+  serializedScene: string;
+};
 
 function areSlidesEqual(previous: Slide[], next: Slide[]) {
   return (
@@ -60,11 +78,22 @@ function areSlidesEqual(previous: Slide[], next: Slide[]) {
   );
 }
 
+function getPersistableAppState(
+  appState: AppState,
+): PersistedWhiteboardScene["appState"] {
+  return {
+    viewBackgroundColor: appState.viewBackgroundColor,
+  };
+}
+
 export function ExcalidrawBoard() {
+  const supabase = useMemo(() => getSupabaseClient(), []);
   const [excalidrawAPI, setExcalidrawAPI] =
     useState<ExcalidrawImperativeAPI | null>(null);
   const [slides, setSlides] = useState<Slide[]>([]);
   const [activeSlideId, setActiveSlideId] = useState<string | null>(null);
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const [sceneLoadedUserId, setSceneLoadedUserId] = useState<string | null>(null);
   const [recordingSettings, setRecordingSettings] = useState<RecordingSettings>(
     DEFAULT_RECORDING_SETTINGS,
   );
@@ -75,6 +104,11 @@ export function ExcalidrawBoard() {
   const [slideNavigationHeight, setSlideNavigationHeight] = useState(40);
   const cameraVideoRef = useRef<HTMLVideoElement>(null);
   const cameraDragRef = useRef<{ offsetX: number; offsetY: number } | null>(null);
+  const currentUserIdRef = useRef<string | null>(null);
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingSceneRef = useRef<PendingSceneSave | null>(null);
+  const isRestoringSceneRef = useRef(false);
+  const lastSavedSceneRef = useRef("");
 
   const slideDimensions = useMemo(
     () => getSlideDimensions(recordingSettings),
@@ -146,6 +180,49 @@ export function ExcalidrawBoard() {
     return () => microphoneStream?.getTracks().forEach((track) => track.stop());
   }, [microphoneStream]);
 
+  useEffect(() => {
+    currentUserIdRef.current = currentUserId;
+  }, [currentUserId]);
+
+  useEffect(() => {
+    if (!supabase) {
+      return;
+    }
+
+    let isMounted = true;
+
+    void supabase.auth.getUser().then(({ data }) => {
+      if (isMounted) {
+        setCurrentUserId(data.user?.id ?? null);
+      }
+    });
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      const nextUserId = session?.user.id ?? null;
+
+      if (nextUserId !== currentUserIdRef.current) {
+        setSceneLoadedUserId(null);
+      }
+
+      setCurrentUserId(nextUserId);
+    });
+
+    return () => {
+      isMounted = false;
+      subscription.unsubscribe();
+    };
+  }, [supabase]);
+
+  useEffect(() => {
+    return () => {
+      if (saveTimerRef.current) {
+        clearTimeout(saveTimerRef.current);
+      }
+    };
+  }, []);
+
   const nextSlideNumber = useMemo(() => {
     const largestNumber = slides.reduce((largest, slide) => {
       const match = slide.name?.match(/(\d+)$/);
@@ -176,6 +253,190 @@ export function ExcalidrawBoard() {
       current && frames.some((frame) => frame.id === current) ? current : null,
     );
   }, []);
+
+  useEffect(() => {
+    if (!supabase || !excalidrawAPI || !currentUserId) {
+      lastSavedSceneRef.current = "";
+      pendingSceneRef.current = null;
+      return;
+    }
+
+    let isCancelled = false;
+
+    const loadSavedScene = async () => {
+      const { data, error } = await supabase
+        .from("whiteboard_scenes")
+        .select("elements, app_state, files")
+        .eq("user_id", currentUserId)
+        .maybeSingle();
+
+      if (isCancelled) {
+        return;
+      }
+
+      if (error) {
+        console.warn("Failed to load saved whiteboard scene", error);
+        setSceneLoadedUserId(currentUserId);
+        return;
+      }
+
+      if (!data) {
+        lastSavedSceneRef.current = "";
+        setSceneLoadedUserId(currentUserId);
+        return;
+      }
+
+      const elements = Array.isArray(data.elements)
+        ? (data.elements as ExcalidrawElement[])
+        : [];
+      const appState =
+        data.app_state && typeof data.app_state === "object"
+          ? (data.app_state as PersistedWhiteboardScene["appState"])
+          : { viewBackgroundColor: "#f8f9fa" };
+      const files =
+        data.files && typeof data.files === "object"
+          ? (data.files as BinaryFiles)
+          : {};
+
+      isRestoringSceneRef.current = true;
+      excalidrawAPI.addFiles(Object.values(files));
+      excalidrawAPI.updateScene({
+        elements,
+        appState: {
+          ...appState,
+          selectedElementIds: {},
+        },
+        captureUpdate: "NEVER",
+      });
+      syncSlides(elements);
+      lastSavedSceneRef.current = JSON.stringify({ elements, appState, files });
+      setSceneLoadedUserId(currentUserId);
+
+      requestAnimationFrame(() => {
+        isRestoringSceneRef.current = false;
+      });
+    };
+
+    void loadSavedScene();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [currentUserId, excalidrawAPI, supabase, syncSlides]);
+
+  const persistScene = useCallback(
+    async (pendingSave: PendingSceneSave) => {
+      if (!supabase || pendingSave.userId !== currentUserIdRef.current) {
+        return;
+      }
+
+      const { error } = await supabase
+        .from("whiteboard_scenes")
+        .upsert(
+          {
+            user_id: pendingSave.userId,
+            elements: pendingSave.scene.elements,
+            app_state: pendingSave.scene.appState,
+            files: pendingSave.scene.files,
+          },
+          { onConflict: "user_id" },
+        );
+
+      if (error) {
+        console.warn("Failed to save whiteboard scene", error);
+        return;
+      }
+
+      lastSavedSceneRef.current = pendingSave.serializedScene;
+
+      if (pendingSceneRef.current?.serializedScene === pendingSave.serializedScene) {
+        pendingSceneRef.current = null;
+      }
+    },
+    [supabase],
+  );
+
+  useEffect(() => {
+    const flushPendingScene = () => {
+      const pendingSave = pendingSceneRef.current;
+
+      if (!pendingSave) {
+        return;
+      }
+
+      if (saveTimerRef.current) {
+        clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = null;
+      }
+
+      void persistScene(pendingSave);
+    };
+
+    const flushWhenHidden = () => {
+      if (document.visibilityState === "hidden") {
+        flushPendingScene();
+      }
+    };
+
+    window.addEventListener("pagehide", flushPendingScene);
+    document.addEventListener("visibilitychange", flushWhenHidden);
+
+    return () => {
+      window.removeEventListener("pagehide", flushPendingScene);
+      document.removeEventListener("visibilitychange", flushWhenHidden);
+    };
+  }, [persistScene]);
+
+  const handleSceneChange = useCallback(
+    (
+      elements: readonly ExcalidrawElement[],
+      appState: AppState,
+      files: BinaryFiles,
+    ) => {
+      syncSlides(elements);
+
+      if (
+        !supabase ||
+        !currentUserId ||
+        sceneLoadedUserId !== currentUserId ||
+        isRestoringSceneRef.current
+      ) {
+        return;
+      }
+
+      const persistedScene: PersistedWhiteboardScene = {
+        elements,
+        appState: getPersistableAppState(appState),
+        files,
+      };
+      const serializedScene = JSON.stringify(persistedScene);
+
+      if (serializedScene === lastSavedSceneRef.current) {
+        return;
+      }
+
+      pendingSceneRef.current = {
+        userId: currentUserId,
+        scene: persistedScene,
+        serializedScene,
+      };
+
+      if (saveTimerRef.current) {
+        clearTimeout(saveTimerRef.current);
+      }
+
+      saveTimerRef.current = setTimeout(() => {
+        const pendingSave = pendingSceneRef.current;
+
+        if (!pendingSave) {
+          return;
+        }
+
+        void persistScene(pendingSave);
+      }, SCENE_SAVE_DELAY_MS);
+    },
+    [currentUserId, persistScene, sceneLoadedUserId, supabase, syncSlides],
+  );
 
   const focusSlide = useCallback(
     (slide: Slide) => {
@@ -338,7 +599,7 @@ export function ExcalidrawBoard() {
         name="WhiteBoard"
         autoFocus
         excalidrawAPI={setExcalidrawAPI}
-        onChange={syncSlides}
+        onChange={handleSceneChange}
         initialData={{
           appState: {
             viewBackgroundColor: "#f8f9fa",

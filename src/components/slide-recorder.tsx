@@ -556,6 +556,7 @@ export function SlideRecorder({
   const recorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const chunksRef = useRef<Blob[]>([]);
+  const teleprompterScrollRemainderRef = useRef(0);
   const renderTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const renderInProgressRef = useRef(false);
   const statusRef = useRef<RecorderStatus>(status);
@@ -570,7 +571,7 @@ export function SlideRecorder({
     useRef<TeleprompterResizeOperation | null>(null);
   const teleprompterDragRef =
     useRef<TeleprompterDragOperation | null>(null);
-  const effectiveTeleprompterSpeed = teleprompterSpeed * 2;
+  const effectiveTeleprompterSpeed = teleprompterSpeed;
   const teleprompterVisualOpacity = Math.max(0.15, 1 - teleprompterOpacity / 100);
   const activeTeleprompterScript =
     teleprompterScripts[activeTeleprompterScriptIndex] ?? "";
@@ -603,6 +604,7 @@ export function SlideRecorder({
     if (teleprompterTextRef.current) {
       teleprompterTextRef.current.scrollTop = 0;
     }
+    teleprompterScrollRemainderRef.current = 0;
   }, [activeTeleprompterScriptIndex]);
 
   useEffect(() => {
@@ -622,7 +624,13 @@ export function SlideRecorder({
       previousTime = time;
 
       if (textArea) {
-        textArea.scrollTop += effectiveTeleprompterSpeed * deltaSeconds;
+        teleprompterScrollRemainderRef.current +=
+          effectiveTeleprompterSpeed * deltaSeconds;
+        const wholePixels = Math.trunc(teleprompterScrollRemainderRef.current);
+        if (wholePixels !== 0) {
+          textArea.scrollTop += wholePixels;
+          teleprompterScrollRemainderRef.current -= wholePixels;
+        }
       }
 
       animationFrame = requestAnimationFrame(scrollText);
@@ -1719,6 +1727,7 @@ export function SlideRecorder({
                   className="h-6 w-12 rounded-md border border-zinc-200 bg-zinc-50 text-center text-xs font-semibold tabular-nums text-zinc-700 outline-none focus:border-zinc-400"
                   aria-label="提词器滚动速度"
                 />
+                <span className="shrink-0 text-[10px] font-medium text-zinc-400">px/s</span>
               </div>
               <label className="flex min-w-0 flex-1 items-center gap-2 text-xs font-medium whitespace-nowrap text-zinc-500">
                 <span className="shrink-0">透明度</span>
