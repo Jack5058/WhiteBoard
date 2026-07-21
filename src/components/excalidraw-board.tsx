@@ -8,9 +8,14 @@ import type {
   AppState,
   BinaryFiles,
   ExcalidrawImperativeAPI,
+  LibraryItem,
+  LibraryItems,
 } from "@excalidraw/excalidraw/types";
 import dynamic from "next/dynamic";
-import type { PointerEvent as ReactPointerEvent, WheelEvent } from "react";
+import type {
+  PointerEvent as ReactPointerEvent,
+  WheelEvent,
+} from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   type CameraLayout,
@@ -41,6 +46,7 @@ const Excalidraw = dynamic(
 
 const SLIDE_GAP = 160;
 const SCENE_SAVE_DELAY_MS = 900;
+const LIBRARY_SAVE_DELAY_MS = 900;
 
 type Slide = Pick<
   ExcalidrawFrameElement,
@@ -57,6 +63,12 @@ type PendingSceneSave = {
   userId: string;
   scene: PersistedWhiteboardScene;
   serializedScene: string;
+};
+
+type PendingLibrarySave = {
+  userId: string;
+  libraryItems: LibraryItems;
+  serializedLibraryItems: string;
 };
 
 function areSlidesEqual(previous: Slide[], next: Slide[]) {
@@ -86,6 +98,19 @@ function getPersistableAppState(
   };
 }
 
+function normalizeLibraryItems(libraryItems: unknown): LibraryItems {
+  if (!Array.isArray(libraryItems)) {
+    return [];
+  }
+
+  return libraryItems.filter(
+    (item): item is LibraryItem =>
+      item &&
+      typeof item === "object" &&
+      Array.isArray((item as Partial<LibraryItem>).elements),
+  );
+}
+
 export function ExcalidrawBoard() {
   const supabase = useMemo(() => getSupabaseClient(), []);
   const [excalidrawAPI, setExcalidrawAPI] =
@@ -105,10 +130,16 @@ export function ExcalidrawBoard() {
   const cameraVideoRef = useRef<HTMLVideoElement>(null);
   const cameraDragRef = useRef<{ offsetX: number; offsetY: number } | null>(null);
   const currentUserIdRef = useRef<string | null>(null);
+  const hasLifetimeAccessRef = useRef(hasLifetimeAccess);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingSceneRef = useRef<PendingSceneSave | null>(null);
   const isRestoringSceneRef = useRef(false);
   const lastSavedSceneRef = useRef("");
+  const libraryLoadedUserIdRef = useRef<string | null>(null);
+  const librarySaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingLibraryRef = useRef<PendingLibrarySave | null>(null);
+  const isRestoringLibraryRef = useRef(false);
+  const lastSavedLibraryRef = useRef("");
 
   const slideDimensions = useMemo(
     () => getSlideDimensions(recordingSettings),
@@ -185,6 +216,10 @@ export function ExcalidrawBoard() {
   }, [currentUserId]);
 
   useEffect(() => {
+    hasLifetimeAccessRef.current = hasLifetimeAccess;
+  }, [hasLifetimeAccess]);
+
+  useEffect(() => {
     if (!supabase) {
       return;
     }
@@ -204,6 +239,9 @@ export function ExcalidrawBoard() {
 
       if (nextUserId !== currentUserIdRef.current) {
         setSceneLoadedUserId(null);
+        libraryLoadedUserIdRef.current = null;
+        lastSavedLibraryRef.current = "";
+        pendingLibraryRef.current = null;
       }
 
       setCurrentUserId(nextUserId);
@@ -219,6 +257,9 @@ export function ExcalidrawBoard() {
     return () => {
       if (saveTimerRef.current) {
         clearTimeout(saveTimerRef.current);
+      }
+      if (librarySaveTimerRef.current) {
+        clearTimeout(librarySaveTimerRef.current);
       }
     };
   }, []);
@@ -438,6 +479,198 @@ export function ExcalidrawBoard() {
     [currentUserId, persistScene, sceneLoadedUserId, supabase, syncSlides],
   );
 
+  const persistLibrary = useCallback(
+    async (pendingSave: PendingLibrarySave) => {
+      if (
+        !supabase ||
+        !hasLifetimeAccessRef.current ||
+        pendingSave.userId !== currentUserIdRef.current
+      ) {
+        return;
+      }
+
+      const { error } = await supabase
+        .from("excalidraw_libraries")
+        .upsert(
+          {
+            user_id: pendingSave.userId,
+            library_items: pendingSave.libraryItems,
+          },
+          { onConflict: "user_id" },
+        );
+
+      if (error) {
+        console.warn("Failed to save Excalidraw library", error);
+        return;
+      }
+
+      lastSavedLibraryRef.current = pendingSave.serializedLibraryItems;
+
+      if (
+        pendingLibraryRef.current?.serializedLibraryItems ===
+        pendingSave.serializedLibraryItems
+      ) {
+        pendingLibraryRef.current = null;
+      }
+    },
+    [supabase],
+  );
+
+  const handleLibraryChange = useCallback(
+    (libraryItems: LibraryItems) => {
+      if (
+        !supabase ||
+        !currentUserId ||
+        !hasLifetimeAccess ||
+        libraryLoadedUserIdRef.current !== currentUserId ||
+        isRestoringLibraryRef.current
+      ) {
+        return;
+      }
+
+      const normalizedLibraryItems = normalizeLibraryItems(libraryItems);
+      const serializedLibraryItems = JSON.stringify(normalizedLibraryItems);
+
+      if (serializedLibraryItems === lastSavedLibraryRef.current) {
+        return;
+      }
+
+      pendingLibraryRef.current = {
+        userId: currentUserId,
+        libraryItems: normalizedLibraryItems,
+        serializedLibraryItems,
+      };
+
+      if (librarySaveTimerRef.current) {
+        clearTimeout(librarySaveTimerRef.current);
+      }
+
+      librarySaveTimerRef.current = setTimeout(() => {
+        const pendingSave = pendingLibraryRef.current;
+
+        if (!pendingSave) {
+          return;
+        }
+
+        void persistLibrary(pendingSave);
+      }, LIBRARY_SAVE_DELAY_MS);
+    },
+    [currentUserId, hasLifetimeAccess, persistLibrary, supabase],
+  );
+
+  useEffect(() => {
+    if (!excalidrawAPI) {
+      return;
+    }
+
+    if (!currentUserId || !hasLifetimeAccess) {
+      lastSavedLibraryRef.current = "";
+      pendingLibraryRef.current = null;
+
+      if (libraryLoadedUserIdRef.current) {
+        isRestoringLibraryRef.current = true;
+        void excalidrawAPI
+          .updateLibrary({
+            libraryItems: [],
+            merge: false,
+            prompt: false,
+            openLibraryMenu: false,
+          })
+          .finally(() => {
+            requestAnimationFrame(() => {
+              isRestoringLibraryRef.current = false;
+            });
+          });
+      }
+
+      libraryLoadedUserIdRef.current = null;
+      return;
+    }
+
+    if (!supabase || libraryLoadedUserIdRef.current === currentUserId) {
+      return;
+    }
+
+    let isCancelled = false;
+
+    const loadSavedLibrary = async () => {
+      const { data, error } = await supabase
+        .from("excalidraw_libraries")
+        .select("library_items")
+        .eq("user_id", currentUserId)
+        .maybeSingle();
+
+      if (isCancelled) {
+        return;
+      }
+
+      if (error) {
+        console.warn("Failed to load Excalidraw library", error);
+        libraryLoadedUserIdRef.current = currentUserId;
+        return;
+      }
+
+      const libraryItems = normalizeLibraryItems(data?.library_items);
+
+      isRestoringLibraryRef.current = true;
+      await excalidrawAPI.updateLibrary({
+        libraryItems,
+        merge: false,
+        prompt: false,
+        openLibraryMenu: false,
+        defaultStatus: "published",
+      });
+
+      if (isCancelled) {
+        return;
+      }
+
+      lastSavedLibraryRef.current = JSON.stringify(libraryItems);
+      libraryLoadedUserIdRef.current = currentUserId;
+
+      requestAnimationFrame(() => {
+        isRestoringLibraryRef.current = false;
+      });
+    };
+
+    void loadSavedLibrary();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [currentUserId, excalidrawAPI, hasLifetimeAccess, supabase]);
+
+  useEffect(() => {
+    const flushPendingLibrary = () => {
+      const pendingSave = pendingLibraryRef.current;
+
+      if (!pendingSave) {
+        return;
+      }
+
+      if (librarySaveTimerRef.current) {
+        clearTimeout(librarySaveTimerRef.current);
+        librarySaveTimerRef.current = null;
+      }
+
+      void persistLibrary(pendingSave);
+    };
+
+    const flushWhenHidden = () => {
+      if (document.visibilityState === "hidden") {
+        flushPendingLibrary();
+      }
+    };
+
+    window.addEventListener("pagehide", flushPendingLibrary);
+    document.addEventListener("visibilitychange", flushWhenHidden);
+
+    return () => {
+      window.removeEventListener("pagehide", flushPendingLibrary);
+      document.removeEventListener("visibilitychange", flushWhenHidden);
+    };
+  }, [persistLibrary]);
+
   const focusSlide = useCallback(
     (slide: Slide) => {
       if (!excalidrawAPI) {
@@ -600,6 +833,7 @@ export function ExcalidrawBoard() {
         autoFocus
         excalidrawAPI={setExcalidrawAPI}
         onChange={handleSceneChange}
+        onLibraryChange={handleLibraryChange}
         initialData={{
           appState: {
             viewBackgroundColor: "#f8f9fa",
