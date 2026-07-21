@@ -7,12 +7,13 @@ import type {
   RefObject,
   WheelEvent as ReactWheelEvent,
 } from "react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   BACKGROUND_STYLES,
   type CameraLayout,
   type RecordingSettings,
 } from "@/components/recording-settings";
+import { getSupabaseClient } from "@/lib/supabase";
 
 export type RecorderSlide = Pick<
   ExcalidrawFrameElement,
@@ -95,6 +96,17 @@ type TeleprompterDragOperation = {
   initialPosition: TeleprompterPosition;
 };
 
+type PersistedTeleprompterState = {
+  scripts: string[];
+  activeScriptIndex: number;
+};
+
+type PendingTeleprompterSave = {
+  userId: string;
+  state: PersistedTeleprompterState;
+  serializedState: string;
+};
+
 const RENDER_INTERVAL = 1000 / 30;
 const VIDEO_BIT_RATE = 8_000_000;
 const MIN_REGION_WIDTH = 200;
@@ -109,6 +121,7 @@ const MIN_TELEPROMPTER_SPEED = 1;
 const MAX_TELEPROMPTER_SPEED = 120;
 const MIN_TELEPROMPTER_FONT_SIZE = 16;
 const MAX_TELEPROMPTER_FONT_SIZE = 36;
+const TELEPROMPTER_SAVE_DELAY_MS = 900;
 const DEFAULT_TELEPROMPTER_SIZE = {
   width: 540,
   height: 460,
@@ -131,6 +144,34 @@ function formatDuration(seconds: number) {
 
 function clampValue(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
+}
+
+function normalizeTeleprompterScripts(scripts: unknown) {
+  if (!Array.isArray(scripts)) {
+    return [""];
+  }
+
+  const normalized = scripts.map((script) =>
+    typeof script === "string" ? script : "",
+  );
+
+  return normalized.length > 0 ? normalized : [""];
+}
+
+function createTeleprompterState(
+  scripts: string[],
+  activeScriptIndex: number,
+): PersistedTeleprompterState {
+  const normalizedScripts = normalizeTeleprompterScripts(scripts);
+
+  return {
+    scripts: normalizedScripts,
+    activeScriptIndex: clampValue(
+      Math.round(Number.isFinite(activeScriptIndex) ? activeScriptIndex : 0),
+      0,
+      normalizedScripts.length - 1,
+    ),
+  };
 }
 
 function makeEven(value: number) {
@@ -523,10 +564,13 @@ export function SlideRecorder({
   cameraLayout,
   showWatermark,
 }: SlideRecorderProps) {
+  const supabase = useMemo(() => getSupabaseClient(), []);
   const [status, setStatus] = useState<RecorderStatus>("idle");
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [region, setRegion] = useState<RecordingRegion | null>(null);
+  const [teleprompterPersistenceUserId, setTeleprompterPersistenceUserId] =
+    useState<string | null>(null);
   const [teleprompterOpen, setTeleprompterOpen] = useState(false);
   const [teleprompterPlaying, setTeleprompterPlaying] = useState(false);
   const [teleprompterSpeed, setTeleprompterSpeed] = useState(12);
@@ -557,6 +601,17 @@ export function SlideRecorder({
   const streamRef = useRef<MediaStream | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const teleprompterScrollRemainderRef = useRef(0);
+  const teleprompterScriptsRef = useRef(teleprompterScripts);
+  const activeTeleprompterScriptIndexRef = useRef(activeTeleprompterScriptIndex);
+  const teleprompterPersistenceUserIdRef = useRef<string | null>(null);
+  const teleprompterLoadedUserIdRef = useRef<string | null>(null);
+  const teleprompterSaveTimerRef =
+    useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingTeleprompterSaveRef = useRef<PendingTeleprompterSave | null>(
+    null,
+  );
+  const isRestoringTeleprompterRef = useRef(false);
+  const lastSavedTeleprompterStateRef = useRef("");
   const renderTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const renderInProgressRef = useRef(false);
   const statusRef = useRef<RecorderStatus>(status);
@@ -587,6 +642,246 @@ export function SlideRecorder({
     visibleTeleprompterScriptStartIndex,
     visibleTeleprompterScriptStartIndex + TELEPROMPTER_VISIBLE_SCRIPT_COUNT,
   );
+
+  useEffect(() => {
+    teleprompterScriptsRef.current = teleprompterScripts;
+  }, [teleprompterScripts]);
+
+  useEffect(() => {
+    activeTeleprompterScriptIndexRef.current = activeTeleprompterScriptIndex;
+  }, [activeTeleprompterScriptIndex]);
+
+  useEffect(() => {
+    teleprompterPersistenceUserIdRef.current = teleprompterPersistenceUserId;
+  }, [teleprompterPersistenceUserId]);
+
+  useEffect(() => {
+    if (!supabase) {
+      return;
+    }
+
+    let isMounted = true;
+
+    void supabase.auth.getUser().then(({ data }) => {
+      if (isMounted) {
+        setTeleprompterPersistenceUserId(data.user?.id ?? null);
+      }
+    });
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      const nextUserId = session?.user.id ?? null;
+
+      if (nextUserId !== teleprompterPersistenceUserIdRef.current) {
+        teleprompterLoadedUserIdRef.current = null;
+        lastSavedTeleprompterStateRef.current = "";
+        pendingTeleprompterSaveRef.current = null;
+      }
+
+      setTeleprompterPersistenceUserId(nextUserId);
+    });
+
+    return () => {
+      isMounted = false;
+      subscription.unsubscribe();
+    };
+  }, [supabase]);
+
+  useEffect(() => {
+    if (!supabase || showWatermark || !teleprompterPersistenceUserId) {
+      teleprompterLoadedUserIdRef.current = null;
+      lastSavedTeleprompterStateRef.current = "";
+      pendingTeleprompterSaveRef.current = null;
+      return;
+    }
+
+    let isCancelled = false;
+
+    const loadTeleprompterState = async () => {
+      const { data, error } = await supabase
+        .from("teleprompter_states")
+        .select("scripts, active_script_index")
+        .eq("user_id", teleprompterPersistenceUserId)
+        .maybeSingle();
+
+      if (isCancelled) {
+        return;
+      }
+
+      if (error) {
+        console.warn("Failed to load teleprompter state", error);
+        teleprompterLoadedUserIdRef.current = teleprompterPersistenceUserId;
+        return;
+      }
+
+      if (!data) {
+        teleprompterLoadedUserIdRef.current = teleprompterPersistenceUserId;
+        return;
+      }
+
+      const restoredState = createTeleprompterState(
+        normalizeTeleprompterScripts(data.scripts),
+        typeof data.active_script_index === "number"
+          ? data.active_script_index
+          : 0,
+      );
+
+      isRestoringTeleprompterRef.current = true;
+      setTeleprompterScripts(restoredState.scripts);
+      setActiveTeleprompterScriptIndex(restoredState.activeScriptIndex);
+      setTeleprompterScriptStartIndex(() => {
+        if (restoredState.activeScriptIndex >= TELEPROMPTER_VISIBLE_SCRIPT_COUNT) {
+          return (
+            restoredState.activeScriptIndex -
+            TELEPROMPTER_VISIBLE_SCRIPT_COUNT +
+            1
+          );
+        }
+
+        return 0;
+      });
+
+      lastSavedTeleprompterStateRef.current = JSON.stringify(restoredState);
+      teleprompterLoadedUserIdRef.current = teleprompterPersistenceUserId;
+
+      requestAnimationFrame(() => {
+        isRestoringTeleprompterRef.current = false;
+      });
+    };
+
+    void loadTeleprompterState();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [showWatermark, supabase, teleprompterPersistenceUserId]);
+
+  const persistTeleprompterState = useCallback(
+    async (pendingSave: PendingTeleprompterSave) => {
+      if (
+        !supabase ||
+        showWatermarkRef.current ||
+        pendingSave.userId !== teleprompterPersistenceUserIdRef.current
+      ) {
+        return;
+      }
+
+      const { error } = await supabase
+        .from("teleprompter_states")
+        .upsert(
+          {
+            user_id: pendingSave.userId,
+            scripts: pendingSave.state.scripts,
+            active_script_index: pendingSave.state.activeScriptIndex,
+          },
+          { onConflict: "user_id" },
+        );
+
+      if (error) {
+        console.warn("Failed to save teleprompter state", error);
+        return;
+      }
+
+      lastSavedTeleprompterStateRef.current = pendingSave.serializedState;
+
+      if (
+        pendingTeleprompterSaveRef.current?.serializedState ===
+        pendingSave.serializedState
+      ) {
+        pendingTeleprompterSaveRef.current = null;
+      }
+    },
+    [supabase],
+  );
+
+  useEffect(() => {
+    if (
+      !supabase ||
+      showWatermark ||
+      !teleprompterPersistenceUserId ||
+      teleprompterLoadedUserIdRef.current !== teleprompterPersistenceUserId ||
+      isRestoringTeleprompterRef.current
+    ) {
+      return;
+    }
+
+    const nextState = createTeleprompterState(
+      teleprompterScripts,
+      activeTeleprompterScriptIndex,
+    );
+    const serializedState = JSON.stringify(nextState);
+
+    if (serializedState === lastSavedTeleprompterStateRef.current) {
+      return;
+    }
+
+    pendingTeleprompterSaveRef.current = {
+      userId: teleprompterPersistenceUserId,
+      state: nextState,
+      serializedState,
+    };
+
+    if (teleprompterSaveTimerRef.current) {
+      clearTimeout(teleprompterSaveTimerRef.current);
+    }
+
+    teleprompterSaveTimerRef.current = setTimeout(() => {
+      const pendingSave = pendingTeleprompterSaveRef.current;
+
+      if (!pendingSave) {
+        return;
+      }
+
+      void persistTeleprompterState(pendingSave);
+    }, TELEPROMPTER_SAVE_DELAY_MS);
+  }, [
+    activeTeleprompterScriptIndex,
+    persistTeleprompterState,
+    showWatermark,
+    supabase,
+    teleprompterPersistenceUserId,
+    teleprompterScripts,
+  ]);
+
+  useEffect(() => {
+    const flushPendingTeleprompterState = () => {
+      const pendingSave = pendingTeleprompterSaveRef.current;
+
+      if (!pendingSave) {
+        return;
+      }
+
+      if (teleprompterSaveTimerRef.current) {
+        clearTimeout(teleprompterSaveTimerRef.current);
+        teleprompterSaveTimerRef.current = null;
+      }
+
+      void persistTeleprompterState(pendingSave);
+    };
+
+    const flushWhenHidden = () => {
+      if (document.visibilityState === "hidden") {
+        flushPendingTeleprompterState();
+      }
+    };
+
+    window.addEventListener("pagehide", flushPendingTeleprompterState);
+    document.addEventListener("visibilitychange", flushWhenHidden);
+
+    return () => {
+      window.removeEventListener("pagehide", flushPendingTeleprompterState);
+      document.removeEventListener("visibilitychange", flushWhenHidden);
+    };
+  }, [persistTeleprompterState]);
+
+  useEffect(() => {
+    return () => {
+      if (teleprompterSaveTimerRef.current) {
+        clearTimeout(teleprompterSaveTimerRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     statusRef.current = status;
