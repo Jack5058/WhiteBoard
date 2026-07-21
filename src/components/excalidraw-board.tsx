@@ -47,6 +47,9 @@ const Excalidraw = dynamic(
 const SLIDE_GAP = 160;
 const SCENE_SAVE_DELAY_MS = 900;
 const LIBRARY_SAVE_DELAY_MS = 900;
+const WHITEBOARD_SCENE_BUCKET = "whiteboard-scenes";
+const WHITEBOARD_SCENE_FILE = "scene.json";
+const DATABASE_SCENE_FALLBACK_MAX_BYTES = 750_000;
 
 type Slide = Pick<
   ExcalidrawFrameElement,
@@ -70,6 +73,8 @@ type PendingLibrarySave = {
   libraryItems: LibraryItems;
   serializedLibraryItems: string;
 };
+
+type SceneSaveStatus = "idle" | "saving" | "saved" | "error";
 
 function areSlidesEqual(previous: Slide[], next: Slide[]) {
   return (
@@ -96,6 +101,57 @@ function getPersistableAppState(
   return {
     viewBackgroundColor: appState.viewBackgroundColor,
   };
+}
+
+function getWhiteboardScenePath(userId: string) {
+  return `${userId}/${WHITEBOARD_SCENE_FILE}`;
+}
+
+function normalizePersistedWhiteboardScene(
+  scene: unknown,
+): PersistedWhiteboardScene {
+  const candidate =
+    scene && typeof scene === "object"
+      ? (scene as Partial<PersistedWhiteboardScene>)
+      : {};
+
+  return {
+    elements: Array.isArray(candidate.elements)
+      ? (candidate.elements as ExcalidrawElement[])
+      : [],
+    appState:
+      candidate.appState && typeof candidate.appState === "object"
+        ? (candidate.appState as PersistedWhiteboardScene["appState"])
+        : { viewBackgroundColor: "#f8f9fa" },
+    files:
+      candidate.files && typeof candidate.files === "object"
+        ? (candidate.files as BinaryFiles)
+        : {},
+  };
+}
+
+function getStoredWhiteboardScene(data: {
+  elements?: unknown;
+  app_state?: unknown;
+  files?: unknown;
+}): PersistedWhiteboardScene {
+  return {
+    elements: Array.isArray(data.elements)
+      ? (data.elements as ExcalidrawElement[])
+      : [],
+    appState:
+      data.app_state && typeof data.app_state === "object"
+        ? (data.app_state as PersistedWhiteboardScene["appState"])
+        : { viewBackgroundColor: "#f8f9fa" },
+    files:
+      data.files && typeof data.files === "object"
+        ? (data.files as BinaryFiles)
+        : {},
+  };
+}
+
+function getByteSize(value: string) {
+  return new Blob([value]).size;
 }
 
 function normalizeLibraryItems(libraryItems: unknown): LibraryItems {
@@ -127,12 +183,19 @@ export function ExcalidrawBoard() {
   const [hasLifetimeAccess, setHasLifetimeAccess] = useState(false);
   const [cameraPosition, setCameraPosition] = useState({ x: 32, y: 120 });
   const [slideNavigationHeight, setSlideNavigationHeight] = useState(40);
+  const [sceneSaveStatus, setSceneSaveStatus] =
+    useState<SceneSaveStatus>("idle");
+  const [sceneSaveMessage, setSceneSaveMessage] = useState("");
   const cameraVideoRef = useRef<HTMLVideoElement>(null);
   const cameraDragRef = useRef<{ offsetX: number; offsetY: number } | null>(null);
   const currentUserIdRef = useRef<string | null>(null);
   const hasLifetimeAccessRef = useRef(hasLifetimeAccess);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const sceneSaveStatusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
   const pendingSceneRef = useRef<PendingSceneSave | null>(null);
+  const isSceneSaveInFlightRef = useRef(false);
   const isRestoringSceneRef = useRef(false);
   const lastSavedSceneRef = useRef("");
   const libraryLoadedUserIdRef = useRef<string | null>(null);
@@ -239,6 +302,8 @@ export function ExcalidrawBoard() {
 
       if (nextUserId !== currentUserIdRef.current) {
         setSceneLoadedUserId(null);
+        lastSavedSceneRef.current = "";
+        pendingSceneRef.current = null;
         libraryLoadedUserIdRef.current = null;
         lastSavedLibraryRef.current = "";
         pendingLibraryRef.current = null;
@@ -257,6 +322,9 @@ export function ExcalidrawBoard() {
     return () => {
       if (saveTimerRef.current) {
         clearTimeout(saveTimerRef.current);
+      }
+      if (sceneSaveStatusTimerRef.current) {
+        clearTimeout(sceneSaveStatusTimerRef.current);
       }
       if (librarySaveTimerRef.current) {
         clearTimeout(librarySaveTimerRef.current);
@@ -307,7 +375,7 @@ export function ExcalidrawBoard() {
     const loadSavedScene = async () => {
       const { data, error } = await supabase
         .from("whiteboard_scenes")
-        .select("elements, app_state, files")
+        .select("elements, app_state, files, storage_path")
         .eq("user_id", currentUserId)
         .maybeSingle();
 
@@ -327,17 +395,32 @@ export function ExcalidrawBoard() {
         return;
       }
 
-      const elements = Array.isArray(data.elements)
-        ? (data.elements as ExcalidrawElement[])
-        : [];
-      const appState =
-        data.app_state && typeof data.app_state === "object"
-          ? (data.app_state as PersistedWhiteboardScene["appState"])
-          : { viewBackgroundColor: "#f8f9fa" };
-      const files =
-        data.files && typeof data.files === "object"
-          ? (data.files as BinaryFiles)
-          : {};
+      let persistedScene: PersistedWhiteboardScene | null = null;
+
+      if (typeof data.storage_path === "string" && data.storage_path) {
+        const { data: sceneFile, error: downloadError } = await supabase.storage
+          .from(WHITEBOARD_SCENE_BUCKET)
+          .download(data.storage_path);
+
+        if (isCancelled) {
+          return;
+        }
+
+        if (downloadError) {
+          console.warn("Failed to download saved whiteboard scene", downloadError);
+        } else {
+          try {
+            persistedScene = normalizePersistedWhiteboardScene(
+              JSON.parse(await sceneFile.text()),
+            );
+          } catch (parseError) {
+            console.warn("Failed to parse saved whiteboard scene", parseError);
+          }
+        }
+      }
+
+      persistedScene ??= getStoredWhiteboardScene(data);
+      const { elements, appState, files } = persistedScene;
 
       isRestoringSceneRef.current = true;
       excalidrawAPI.addFiles(Object.values(files));
@@ -371,27 +454,103 @@ export function ExcalidrawBoard() {
         return;
       }
 
-      const { error } = await supabase
-        .from("whiteboard_scenes")
-        .upsert(
-          {
-            user_id: pendingSave.userId,
-            elements: pendingSave.scene.elements,
-            app_state: pendingSave.scene.appState,
-            files: pendingSave.scene.files,
-          },
-          { onConflict: "user_id" },
-        );
-
-      if (error) {
-        console.warn("Failed to save whiteboard scene", error);
+      if (isSceneSaveInFlightRef.current) {
+        pendingSceneRef.current = pendingSave;
         return;
       }
 
-      lastSavedSceneRef.current = pendingSave.serializedScene;
+      isSceneSaveInFlightRef.current = true;
 
-      if (pendingSceneRef.current?.serializedScene === pendingSave.serializedScene) {
-        pendingSceneRef.current = null;
+      try {
+        let saveToWrite: PendingSceneSave | null = pendingSave;
+
+        while (saveToWrite) {
+          if (saveToWrite.userId !== currentUserIdRef.current) {
+            break;
+          }
+
+          if (
+            pendingSceneRef.current?.serializedScene ===
+            saveToWrite.serializedScene
+          ) {
+            pendingSceneRef.current = null;
+          }
+
+          const sceneSize = getByteSize(saveToWrite.serializedScene);
+          const scenePath = getWhiteboardScenePath(saveToWrite.userId);
+          const keepDatabaseFallback =
+            sceneSize <= DATABASE_SCENE_FALLBACK_MAX_BYTES;
+
+          if (sceneSaveStatusTimerRef.current) {
+            clearTimeout(sceneSaveStatusTimerRef.current);
+            sceneSaveStatusTimerRef.current = null;
+          }
+
+          setSceneSaveStatus("saving");
+          setSceneSaveMessage("正在保存白板...");
+
+          const { error: uploadError } = await supabase.storage
+            .from(WHITEBOARD_SCENE_BUCKET)
+            .upload(scenePath, new Blob([saveToWrite.serializedScene]), {
+              cacheControl: "0",
+              contentType: "application/json",
+              upsert: true,
+            });
+
+          if (uploadError) {
+            console.warn("Failed to upload whiteboard scene", uploadError);
+            setSceneSaveStatus("error");
+            setSceneSaveMessage("白板保存失败，请稍后重试或检查网络。");
+
+            if (!pendingSceneRef.current) {
+              pendingSceneRef.current = saveToWrite;
+            }
+            break;
+          }
+
+          const { error } = await supabase
+            .from("whiteboard_scenes")
+            .upsert(
+              {
+                user_id: saveToWrite.userId,
+                elements: keepDatabaseFallback ? saveToWrite.scene.elements : [],
+                app_state: saveToWrite.scene.appState,
+                files: keepDatabaseFallback ? saveToWrite.scene.files : {},
+                storage_path: scenePath,
+                storage_size: sceneSize,
+                storage_updated_at: new Date().toISOString(),
+              },
+              { onConflict: "user_id" },
+            );
+
+          if (error) {
+            console.warn("Failed to save whiteboard scene", error);
+            setSceneSaveStatus("error");
+            setSceneSaveMessage("白板保存失败，请确认数据库迁移已执行。");
+
+            if (!pendingSceneRef.current) {
+              pendingSceneRef.current = saveToWrite;
+            }
+            break;
+          }
+
+          lastSavedSceneRef.current = saveToWrite.serializedScene;
+          setSceneSaveStatus("saved");
+          setSceneSaveMessage("白板已保存");
+          sceneSaveStatusTimerRef.current = setTimeout(() => {
+            setSceneSaveStatus("idle");
+            setSceneSaveMessage("");
+          }, 1400);
+
+          const queuedSave: PendingSceneSave | null = pendingSceneRef.current;
+          saveToWrite =
+            queuedSave &&
+            queuedSave.serializedScene !== lastSavedSceneRef.current
+              ? queuedSave
+              : null;
+        }
+      } finally {
+        isSceneSaveInFlightRef.current = false;
       }
     },
     [supabase],
@@ -419,11 +578,22 @@ export function ExcalidrawBoard() {
       }
     };
 
+    const warnBeforeUnload = (event: BeforeUnloadEvent) => {
+      if (!pendingSceneRef.current && !isSceneSaveInFlightRef.current) {
+        return;
+      }
+
+      event.preventDefault();
+      event.returnValue = "";
+    };
+
     window.addEventListener("pagehide", flushPendingScene);
+    window.addEventListener("beforeunload", warnBeforeUnload);
     document.addEventListener("visibilitychange", flushWhenHidden);
 
     return () => {
       window.removeEventListener("pagehide", flushPendingScene);
+      window.removeEventListener("beforeunload", warnBeforeUnload);
       document.removeEventListener("visibilitychange", flushWhenHidden);
     };
   }, [persistScene]);
@@ -825,6 +995,8 @@ export function ExcalidrawBoard() {
     container.scrollLeft += distance;
   }, []);
 
+  const showSceneSaveStatus = currentUserId && sceneSaveStatus !== "idle";
+
   return (
     <div className="relative h-dvh w-full overflow-hidden">
       <Excalidraw
@@ -842,6 +1014,18 @@ export function ExcalidrawBoard() {
       />
 
       <AccountMenu onEntitlementChange={setHasLifetimeAccess} />
+
+      {showSceneSaveStatus && (
+        <div
+          className={`pointer-events-none absolute right-4 top-16 z-[20] rounded-xl border px-3 py-2 text-xs font-medium shadow-sm backdrop-blur ${
+            sceneSaveStatus === "error"
+              ? "border-red-200 bg-red-50/95 text-red-600"
+              : "border-zinc-200 bg-white/95 text-zinc-500"
+          }`}
+        >
+          {sceneSaveMessage}
+        </div>
+      )}
 
       <RecordingSettingsPanel
         settings={recordingSettings}
