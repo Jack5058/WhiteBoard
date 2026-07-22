@@ -47,6 +47,8 @@ type RecordingRegion = {
   height: number;
 };
 
+type RecordingSourceRegion = Pick<RecordingRegion, "width" | "height">;
+
 type RecordingContentRect = {
   x: number;
   y: number;
@@ -198,7 +200,7 @@ function getVideoSize(region: RecordingRegion, settings: RecordingSettings) {
 
 function getContentRect(
   targetCanvas: HTMLCanvasElement,
-  region: RecordingRegion,
+  region: RecordingSourceRegion,
   settings: RecordingSettings,
 ): RecordingContentRect {
   const totalWidth = region.width + settings.backgroundPadding * 2;
@@ -475,6 +477,7 @@ function drawRecordingFrame(
   targetCanvas: HTMLCanvasElement,
   sceneCanvas: HTMLCanvasElement,
   region: RecordingRegion,
+  sourceRegion: RecordingSourceRegion,
   boardBounds: DOMRect,
   backgroundColor: string,
   settings: RecordingSettings,
@@ -493,10 +496,14 @@ function drawRecordingFrame(
   context.globalAlpha = 1;
   context.setTransform(1, 0, 0, 1, 0, 0);
   fillVideoBackground(context, targetCanvas, settings.background);
-  const destination = getContentRect(targetCanvas, region, settings);
+  const destination = getContentRect(targetCanvas, sourceRegion, settings);
 
   context.save();
-  roundedRectPath(context, destination, settings.recordingRadius * (destination.width / region.width));
+  roundedRectPath(
+    context,
+    destination,
+    settings.recordingRadius * (destination.width / sourceRegion.width),
+  );
   context.clip();
   context.fillStyle = backgroundColor;
   context.fillRect(destination.x, destination.y, destination.width, destination.height);
@@ -597,6 +604,7 @@ export function SlideRecorder({
   const teleprompterButtonRef = useRef<HTMLButtonElement>(null);
   const teleprompterTextRef = useRef<HTMLTextAreaElement>(null);
   const sceneCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const sourceRegionRef = useRef<RecordingSourceRegion | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const chunksRef = useRef<Blob[]>([]);
@@ -1208,7 +1216,6 @@ export function SlideRecorder({
       await import("@excalidraw/excalidraw");
     const appState = excalidrawAPI.getAppState();
     const currentSettings = settingsRef.current;
-    const contentRect = getContentRect(targetCanvas, currentRegion, currentSettings);
     const topLeft = viewportCoordsToSceneCoords(
       {
         clientX: boardBounds.left + currentRegion.x,
@@ -1234,6 +1241,11 @@ export function SlideRecorder({
         children: [],
       },
     ]);
+    const sourceRegion = {
+      width: Math.max(2, bottomRight.x - topLeft.x),
+      height: Math.max(2, bottomRight.y - topLeft.y),
+    };
+    const contentRect = getContentRect(targetCanvas, sourceRegion, currentSettings);
     const elements = excalidrawAPI.getSceneElements();
     const recordingElements = elements
       .filter(
@@ -1260,6 +1272,7 @@ export function SlideRecorder({
     });
     const context = targetCanvas.getContext("2d");
     sceneCanvasRef.current = exportedCanvas;
+    sourceRegionRef.current = sourceRegion;
 
     if (!context) {
       throw new Error("无法创建录制画布，请刷新页面后重试。");
@@ -1269,6 +1282,7 @@ export function SlideRecorder({
       targetCanvas,
       exportedCanvas,
       currentRegion,
+      sourceRegion,
       boardBounds,
       appState.viewBackgroundColor || "#ffffff",
       currentSettings,
@@ -1292,12 +1306,14 @@ export function SlideRecorder({
         const targetCanvas = canvasRef.current;
         const sceneCanvas = sceneCanvasRef.current;
         const currentRegion = regionRef.current;
+        const sourceRegion = sourceRegionRef.current;
         const boardBounds = getBoardBounds();
 
         if (
           targetCanvas &&
           sceneCanvas &&
           currentRegion &&
+          sourceRegion &&
           boardBounds &&
           excalidrawAPI
         ) {
@@ -1305,6 +1321,7 @@ export function SlideRecorder({
             targetCanvas,
             sceneCanvas,
             currentRegion,
+            sourceRegion,
             boardBounds,
             excalidrawAPI.getAppState().viewBackgroundColor || "#ffffff",
             settingsRef.current,
@@ -1727,10 +1744,11 @@ export function SlideRecorder({
   const startRecording = useCallback(async () => {
     const canvas = canvasRef.current;
     const currentRegion = regionRef.current;
+    const boardBounds = getBoardBounds();
 
     setError(null);
 
-    if (!canvas || !excalidrawAPI || !currentRegion) {
+    if (!canvas || !excalidrawAPI || !currentRegion || !boardBounds) {
       setError("录制区域尚未准备完成。");
       return;
     }
@@ -1768,11 +1786,37 @@ export function SlideRecorder({
     }
 
     try {
-      const videoSize = getVideoSize(currentRegion, settingsRef.current);
+      const { viewportCoordsToSceneCoords } = await import(
+        "@excalidraw/excalidraw"
+      );
+      const appState = excalidrawAPI.getAppState();
+      const topLeft = viewportCoordsToSceneCoords(
+        {
+          clientX: boardBounds.left + currentRegion.x,
+          clientY: boardBounds.top + currentRegion.y,
+        },
+        appState,
+      );
+      const bottomRight = viewportCoordsToSceneCoords(
+        {
+          clientX: boardBounds.left + currentRegion.x + currentRegion.width,
+          clientY: boardBounds.top + currentRegion.y + currentRegion.height,
+        },
+        appState,
+      );
+      const videoSize = getVideoSize(
+        {
+          ...currentRegion,
+          width: Math.max(2, bottomRight.x - topLeft.x),
+          height: Math.max(2, bottomRight.y - topLeft.y),
+        },
+        settingsRef.current,
+      );
 
       canvas.width = videoSize.width;
       canvas.height = videoSize.height;
       sceneCanvasRef.current = null;
+      sourceRegionRef.current = null;
       await renderRecordingRegion();
 
       const stream = canvas.captureStream(30);
