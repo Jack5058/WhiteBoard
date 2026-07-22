@@ -154,6 +154,26 @@ function getByteSize(value: string) {
   return new Blob([value]).size;
 }
 
+function getErrorMessage(error: unknown) {
+  if (error && typeof error === "object" && "message" in error) {
+    return String((error as { message?: unknown }).message ?? "未知错误");
+  }
+
+  return "未知错误";
+}
+
+function isMissingStorageSchemaError(error: unknown) {
+  const message = getErrorMessage(error).toLowerCase();
+
+  return (
+    message.includes("storage_path") ||
+    message.includes("storage_size") ||
+    message.includes("storage_updated_at") ||
+    message.includes("column") ||
+    message.includes("schema cache")
+  );
+}
+
 function normalizeLibraryItems(libraryItems: unknown): LibraryItems {
   if (!Array.isArray(libraryItems)) {
     return [];
@@ -373,11 +393,21 @@ export function ExcalidrawBoard() {
     let isCancelled = false;
 
     const loadSavedScene = async () => {
-      const { data, error } = await supabase
+      let sceneResult = await supabase
         .from("whiteboard_scenes")
         .select("elements, app_state, files, storage_path")
         .eq("user_id", currentUserId)
         .maybeSingle();
+
+      if (sceneResult.error && isMissingStorageSchemaError(sceneResult.error)) {
+        sceneResult = await supabase
+          .from("whiteboard_scenes")
+          .select("elements, app_state, files")
+          .eq("user_id", currentUserId)
+          .maybeSingle();
+      }
+
+      const { data, error } = sceneResult;
 
       if (isCancelled) {
         return;
@@ -461,6 +491,36 @@ export function ExcalidrawBoard() {
 
       isSceneSaveInFlightRef.current = true;
 
+      const markSceneSaved = (savedScene: PendingSceneSave) => {
+        lastSavedSceneRef.current = savedScene.serializedScene;
+        setSceneSaveStatus("saved");
+        setSceneSaveMessage("白板已保存");
+        sceneSaveStatusTimerRef.current = setTimeout(() => {
+          setSceneSaveStatus("idle");
+          setSceneSaveMessage("");
+        }, 1400);
+      };
+
+      const getNextQueuedSave = () => {
+        const queuedSave: PendingSceneSave | null = pendingSceneRef.current;
+
+        return queuedSave &&
+          queuedSave.serializedScene !== lastSavedSceneRef.current
+          ? queuedSave
+          : null;
+      };
+
+      const saveLegacyDatabaseScene = (sceneSave: PendingSceneSave) =>
+        supabase.from("whiteboard_scenes").upsert(
+          {
+            user_id: sceneSave.userId,
+            elements: sceneSave.scene.elements,
+            app_state: sceneSave.scene.appState,
+            files: sceneSave.scene.files,
+          },
+          { onConflict: "user_id" },
+        );
+
       try {
         let saveToWrite: PendingSceneSave | null = pendingSave;
 
@@ -499,8 +559,31 @@ export function ExcalidrawBoard() {
 
           if (uploadError) {
             console.warn("Failed to upload whiteboard scene", uploadError);
+
+            if (keepDatabaseFallback) {
+              const { error: fallbackError } =
+                await saveLegacyDatabaseScene(saveToWrite);
+
+              if (!fallbackError) {
+                markSceneSaved(saveToWrite);
+                saveToWrite = getNextQueuedSave();
+                continue;
+              }
+
+              console.warn(
+                "Failed to save fallback whiteboard scene",
+                fallbackError,
+              );
+            }
+
             setSceneSaveStatus("error");
-            setSceneSaveMessage("白板保存失败，请稍后重试或检查网络。");
+            setSceneSaveMessage(
+              `白板保存失败：${getErrorMessage(uploadError)}${
+                keepDatabaseFallback
+                  ? ""
+                  : "。当前白板较大，请确认 Supabase Storage migration 已执行。"
+              }`,
+            );
 
             if (!pendingSceneRef.current) {
               pendingSceneRef.current = saveToWrite;
@@ -525,8 +608,27 @@ export function ExcalidrawBoard() {
 
           if (error) {
             console.warn("Failed to save whiteboard scene", error);
+
+            if (keepDatabaseFallback) {
+              const { error: fallbackError } =
+                await saveLegacyDatabaseScene(saveToWrite);
+
+              if (!fallbackError) {
+                markSceneSaved(saveToWrite);
+                saveToWrite = getNextQueuedSave();
+                continue;
+              }
+
+              console.warn(
+                "Failed to save fallback whiteboard scene",
+                fallbackError,
+              );
+            }
+
             setSceneSaveStatus("error");
-            setSceneSaveMessage("白板保存失败，请确认数据库迁移已执行。");
+            setSceneSaveMessage(
+              `白板保存失败：${getErrorMessage(error)}。请确认数据库迁移已执行。`,
+            );
 
             if (!pendingSceneRef.current) {
               pendingSceneRef.current = saveToWrite;
@@ -534,20 +636,8 @@ export function ExcalidrawBoard() {
             break;
           }
 
-          lastSavedSceneRef.current = saveToWrite.serializedScene;
-          setSceneSaveStatus("saved");
-          setSceneSaveMessage("白板已保存");
-          sceneSaveStatusTimerRef.current = setTimeout(() => {
-            setSceneSaveStatus("idle");
-            setSceneSaveMessage("");
-          }, 1400);
-
-          const queuedSave: PendingSceneSave | null = pendingSceneRef.current;
-          saveToWrite =
-            queuedSave &&
-            queuedSave.serializedScene !== lastSavedSceneRef.current
-              ? queuedSave
-              : null;
+          markSceneSaved(saveToWrite);
+          saveToWrite = getNextQueuedSave();
         }
       } finally {
         isSceneSaveInFlightRef.current = false;
@@ -1017,7 +1107,7 @@ export function ExcalidrawBoard() {
 
       {showSceneSaveStatus && (
         <div
-          className={`pointer-events-none absolute right-4 top-16 z-[20] rounded-xl border px-3 py-2 text-xs font-medium shadow-sm backdrop-blur ${
+          className={`pointer-events-none absolute bottom-4 right-16 z-[20] rounded-xl border px-3 py-2 text-xs font-medium shadow-sm backdrop-blur ${
             sceneSaveStatus === "error"
               ? "border-red-200 bg-red-50/95 text-red-600"
               : "border-zinc-200 bg-white/95 text-zinc-500"
