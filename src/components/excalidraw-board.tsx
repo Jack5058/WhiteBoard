@@ -50,6 +50,7 @@ const LIBRARY_SAVE_DELAY_MS = 900;
 const WHITEBOARD_SCENE_BUCKET = "whiteboard-scenes";
 const WHITEBOARD_SCENE_FILE = "scene.json";
 const DATABASE_SCENE_FALLBACK_MAX_BYTES = 750_000;
+const SCENE_DELTA_CHUNK_SIZE = 200;
 
 type Slide = Pick<
   ExcalidrawFrameElement,
@@ -66,6 +67,7 @@ type PendingSceneSave = {
   userId: string;
   scene: PersistedWhiteboardScene;
   serializedScene: string;
+  delta: PersistedWhiteboardSceneDelta;
 };
 
 type PendingLibrarySave = {
@@ -75,6 +77,20 @@ type PendingLibrarySave = {
 };
 
 type SceneSaveStatus = "idle" | "saving" | "saved" | "error";
+
+type PersistedWhiteboardSceneDelta = {
+  elementUpserts: Array<{
+    element_id: string;
+    element_order: number;
+    element: ExcalidrawElement;
+  }>;
+  deletedElementIds: string[];
+  fileUpserts: Array<{
+    file_id: string;
+    file: BinaryFiles[string];
+  }>;
+  deletedFileIds: string[];
+};
 
 function areSlidesEqual(previous: Slide[], next: Slide[]) {
   return (
@@ -154,6 +170,16 @@ function getByteSize(value: string) {
   return new Blob([value]).size;
 }
 
+function getChunkedItems<T>(items: T[], size: number) {
+  const chunks: T[][] = [];
+
+  for (let index = 0; index < items.length; index += size) {
+    chunks.push(items.slice(index, index + size));
+  }
+
+  return chunks;
+}
+
 function getErrorMessage(error: unknown) {
   if (error && typeof error === "object" && "message" in error) {
     return String((error as { message?: unknown }).message ?? "未知错误");
@@ -169,6 +195,10 @@ function isMissingStorageSchemaError(error: unknown) {
     message.includes("storage_path") ||
     message.includes("storage_size") ||
     message.includes("storage_updated_at") ||
+    message.includes("delta_updated_at") ||
+    message.includes("whiteboard_scene_elements") ||
+    message.includes("whiteboard_scene_files") ||
+    message.includes("relation") ||
     message.includes("column") ||
     message.includes("schema cache")
   );
@@ -218,6 +248,8 @@ export function ExcalidrawBoard() {
   const isSceneSaveInFlightRef = useRef(false);
   const isRestoringSceneRef = useRef(false);
   const lastSavedSceneRef = useRef("");
+  const lastSavedElementVersionsRef = useRef<Map<string, string>>(new Map());
+  const lastSavedFileVersionsRef = useRef<Map<string, string>>(new Map());
   const libraryLoadedUserIdRef = useRef<string | null>(null);
   const librarySaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingLibraryRef = useRef<PendingLibrarySave | null>(null);
@@ -324,6 +356,8 @@ export function ExcalidrawBoard() {
         setSceneLoadedUserId(null);
         lastSavedSceneRef.current = "";
         pendingSceneRef.current = null;
+        lastSavedElementVersionsRef.current = new Map();
+        lastSavedFileVersionsRef.current = new Map();
         libraryLoadedUserIdRef.current = null;
         lastSavedLibraryRef.current = "";
         pendingLibraryRef.current = null;
@@ -383,6 +417,78 @@ export function ExcalidrawBoard() {
     );
   }, []);
 
+  const rememberSavedScene = useCallback(
+    (scene: PersistedWhiteboardScene, serializedScene: string) => {
+      const elementVersions = new Map<string, string>();
+      const fileVersions = new Map<string, string>();
+
+      scene.elements.forEach((element, index) => {
+        elementVersions.set(element.id, `${index}:${JSON.stringify(element)}`);
+      });
+
+      Object.entries(scene.files).forEach(([fileId, file]) => {
+        fileVersions.set(fileId, JSON.stringify(file));
+      });
+
+      lastSavedElementVersionsRef.current = elementVersions;
+      lastSavedFileVersionsRef.current = fileVersions;
+      lastSavedSceneRef.current = serializedScene;
+    },
+    [],
+  );
+
+  const getSceneDelta = useCallback(
+    (scene: PersistedWhiteboardScene): PersistedWhiteboardSceneDelta => {
+      const currentElementIds = new Set<string>();
+      const currentFileIds = new Set<string>();
+      const elementUpserts: PersistedWhiteboardSceneDelta["elementUpserts"] = [];
+      const fileUpserts: PersistedWhiteboardSceneDelta["fileUpserts"] = [];
+
+      scene.elements.forEach((element, index) => {
+        const serializedElement = JSON.stringify(element);
+        const elementVersion = `${index}:${serializedElement}`;
+
+        currentElementIds.add(element.id);
+
+        if (
+          lastSavedElementVersionsRef.current.get(element.id) !==
+          elementVersion
+        ) {
+          elementUpserts.push({
+            element_id: element.id,
+            element_order: index,
+            element,
+          });
+        }
+      });
+
+      Object.entries(scene.files).forEach(([fileId, file]) => {
+        const serializedFile = JSON.stringify(file);
+
+        currentFileIds.add(fileId);
+
+        if (lastSavedFileVersionsRef.current.get(fileId) !== serializedFile) {
+          fileUpserts.push({
+            file_id: fileId,
+            file,
+          });
+        }
+      });
+
+      return {
+        elementUpserts,
+        deletedElementIds: Array.from(
+          lastSavedElementVersionsRef.current.keys(),
+        ).filter((elementId) => !currentElementIds.has(elementId)),
+        fileUpserts,
+        deletedFileIds: Array.from(lastSavedFileVersionsRef.current.keys()).filter(
+          (fileId) => !currentFileIds.has(fileId),
+        ),
+      };
+    },
+    [],
+  );
+
   useEffect(() => {
     if (!supabase || !excalidrawAPI || !currentUserId) {
       lastSavedSceneRef.current = "";
@@ -395,7 +501,7 @@ export function ExcalidrawBoard() {
     const loadSavedScene = async () => {
       let sceneResult = await supabase
         .from("whiteboard_scenes")
-        .select("elements, app_state, files, storage_path")
+        .select("elements, app_state, files, storage_path, delta_updated_at")
         .eq("user_id", currentUserId)
         .maybeSingle();
 
@@ -426,8 +532,69 @@ export function ExcalidrawBoard() {
       }
 
       let persistedScene: PersistedWhiteboardScene | null = null;
+      const hasDeltaScene = Boolean(
+        (data as { delta_updated_at?: unknown }).delta_updated_at,
+      );
 
-      if (typeof data.storage_path === "string" && data.storage_path) {
+      if (hasDeltaScene) {
+        const [elementsResult, filesResult] = await Promise.all([
+          supabase
+            .from("whiteboard_scene_elements")
+            .select("element")
+            .eq("user_id", currentUserId)
+            .order("element_order", { ascending: true }),
+          supabase
+            .from("whiteboard_scene_files")
+            .select("file_id, file")
+            .eq("user_id", currentUserId),
+        ]);
+
+        if (isCancelled) {
+          return;
+        }
+
+        if (elementsResult.error || filesResult.error) {
+          console.warn(
+            "Failed to load delta whiteboard scene",
+            elementsResult.error ?? filesResult.error,
+          );
+        } else {
+          const appState =
+            data.app_state && typeof data.app_state === "object"
+              ? (data.app_state as PersistedWhiteboardScene["appState"])
+              : { viewBackgroundColor: "#f8f9fa" };
+          const files = Object.fromEntries(
+            (filesResult.data ?? [])
+              .filter(
+                (row): row is { file_id: string; file: BinaryFiles[string] } =>
+                  row &&
+                  typeof row.file_id === "string" &&
+                  row.file &&
+                  typeof row.file === "object",
+              )
+              .map((row) => [row.file_id, row.file]),
+          ) as BinaryFiles;
+
+          persistedScene = {
+            elements: (elementsResult.data ?? [])
+              .map((row) => row.element)
+              .filter(
+                (element): element is ExcalidrawElement =>
+                  element &&
+                  typeof element === "object" &&
+                  typeof (element as Partial<ExcalidrawElement>).id === "string",
+              ),
+            appState,
+            files,
+          };
+        }
+      }
+
+      if (
+        !persistedScene &&
+        typeof data.storage_path === "string" &&
+        data.storage_path
+      ) {
         const { data: sceneFile, error: downloadError } = await supabase.storage
           .from(WHITEBOARD_SCENE_BUCKET)
           .download(data.storage_path);
@@ -463,7 +630,10 @@ export function ExcalidrawBoard() {
         captureUpdate: "NEVER",
       });
       syncSlides(elements);
-      lastSavedSceneRef.current = JSON.stringify({ elements, appState, files });
+      rememberSavedScene(
+        persistedScene,
+        JSON.stringify({ elements, appState, files }),
+      );
       setSceneLoadedUserId(currentUserId);
 
       requestAnimationFrame(() => {
@@ -476,7 +646,7 @@ export function ExcalidrawBoard() {
     return () => {
       isCancelled = true;
     };
-  }, [currentUserId, excalidrawAPI, supabase, syncSlides]);
+  }, [currentUserId, excalidrawAPI, rememberSavedScene, supabase, syncSlides]);
 
   const persistScene = useCallback(
     async (pendingSave: PendingSceneSave) => {
@@ -492,7 +662,7 @@ export function ExcalidrawBoard() {
       isSceneSaveInFlightRef.current = true;
 
       const markSceneSaved = (savedScene: PendingSceneSave) => {
-        lastSavedSceneRef.current = savedScene.serializedScene;
+        rememberSavedScene(savedScene.scene, savedScene.serializedScene);
         setSceneSaveStatus("saved");
         setSceneSaveMessage("白板已保存");
         sceneSaveStatusTimerRef.current = setTimeout(() => {
@@ -510,8 +680,19 @@ export function ExcalidrawBoard() {
           : null;
       };
 
-      const saveLegacyDatabaseScene = (sceneSave: PendingSceneSave) =>
-        supabase.from("whiteboard_scenes").upsert(
+      const clearDeltaSceneMarker = async (userId: string) => {
+        const { error } = await supabase
+          .from("whiteboard_scenes")
+          .update({ delta_updated_at: null })
+          .eq("user_id", userId);
+
+        if (error && !isMissingStorageSchemaError(error)) {
+          console.warn("Failed to clear delta whiteboard scene marker", error);
+        }
+      };
+
+      const saveLegacyDatabaseScene = async (sceneSave: PendingSceneSave) => {
+        const result = await supabase.from("whiteboard_scenes").upsert(
           {
             user_id: sceneSave.userId,
             elements: sceneSave.scene.elements,
@@ -520,6 +701,171 @@ export function ExcalidrawBoard() {
           },
           { onConflict: "user_id" },
         );
+
+        if (!result.error) {
+          await clearDeltaSceneMarker(sceneSave.userId);
+        }
+
+        return result;
+      };
+
+      const saveFullStorageScene = async (sceneSave: PendingSceneSave) => {
+        const sceneSize = getByteSize(sceneSave.serializedScene);
+        const scenePath = getWhiteboardScenePath(sceneSave.userId);
+        const keepDatabaseFallback =
+          sceneSize <= DATABASE_SCENE_FALLBACK_MAX_BYTES;
+
+        const { error: uploadError } = await supabase.storage
+          .from(WHITEBOARD_SCENE_BUCKET)
+          .upload(
+            scenePath,
+            new Blob([sceneSave.serializedScene], {
+              type: "application/json",
+            }),
+            {
+              cacheControl: "0",
+              contentType: "application/json",
+              upsert: true,
+            },
+          );
+
+        if (uploadError) {
+          if (keepDatabaseFallback) {
+            const { error: fallbackError } =
+              await saveLegacyDatabaseScene(sceneSave);
+
+            if (!fallbackError) {
+              return { error: null };
+            }
+
+            console.warn(
+              "Failed to save fallback whiteboard scene",
+              fallbackError,
+            );
+          }
+
+          return { error: uploadError };
+        }
+
+        const { error } = await supabase.from("whiteboard_scenes").upsert(
+          {
+            user_id: sceneSave.userId,
+            elements: keepDatabaseFallback ? sceneSave.scene.elements : [],
+            app_state: sceneSave.scene.appState,
+            files: keepDatabaseFallback ? sceneSave.scene.files : {},
+            storage_path: scenePath,
+            storage_size: sceneSize,
+            storage_updated_at: new Date().toISOString(),
+          },
+          { onConflict: "user_id" },
+        );
+
+        if (error && keepDatabaseFallback) {
+          const { error: fallbackError } =
+            await saveLegacyDatabaseScene(sceneSave);
+
+          if (!fallbackError) {
+            return { error: null };
+          }
+
+          console.warn("Failed to save fallback whiteboard scene", fallbackError);
+        }
+
+        if (!error) {
+          await clearDeltaSceneMarker(sceneSave.userId);
+        }
+
+        return { error };
+      };
+
+      const saveDeltaScene = async (sceneSave: PendingSceneSave) => {
+        const savedAt = new Date().toISOString();
+        const { delta } = sceneSave;
+
+        for (const chunk of getChunkedItems(
+          delta.elementUpserts,
+          SCENE_DELTA_CHUNK_SIZE,
+        )) {
+          const { error } = await supabase
+            .from("whiteboard_scene_elements")
+            .upsert(
+              chunk.map(({ element_id, element_order, element }) => ({
+                user_id: sceneSave.userId,
+                element_id,
+                element_order,
+                element,
+                updated_at: savedAt,
+              })),
+              { onConflict: "user_id,element_id" },
+            );
+
+          if (error) {
+            return { error };
+          }
+        }
+
+        for (const chunk of getChunkedItems(
+          delta.deletedElementIds,
+          SCENE_DELTA_CHUNK_SIZE,
+        )) {
+          const { error } = await supabase
+            .from("whiteboard_scene_elements")
+            .delete()
+            .eq("user_id", sceneSave.userId)
+            .in("element_id", chunk);
+
+          if (error) {
+            return { error };
+          }
+        }
+
+        for (const chunk of getChunkedItems(
+          delta.fileUpserts,
+          SCENE_DELTA_CHUNK_SIZE,
+        )) {
+          const { error } = await supabase
+            .from("whiteboard_scene_files")
+            .upsert(
+              chunk.map(({ file_id, file }) => ({
+                user_id: sceneSave.userId,
+                file_id,
+                file,
+                updated_at: savedAt,
+              })),
+              { onConflict: "user_id,file_id" },
+            );
+
+          if (error) {
+            return { error };
+          }
+        }
+
+        for (const chunk of getChunkedItems(
+          delta.deletedFileIds,
+          SCENE_DELTA_CHUNK_SIZE,
+        )) {
+          const { error } = await supabase
+            .from("whiteboard_scene_files")
+            .delete()
+            .eq("user_id", sceneSave.userId)
+            .in("file_id", chunk);
+
+          if (error) {
+            return { error };
+          }
+        }
+
+        return supabase
+          .from("whiteboard_scenes")
+          .upsert(
+            {
+              user_id: sceneSave.userId,
+              app_state: sceneSave.scene.appState,
+              delta_updated_at: savedAt,
+            },
+            { onConflict: "user_id" },
+          );
+      };
 
       try {
         let saveToWrite: PendingSceneSave | null = pendingSave;
@@ -536,11 +882,6 @@ export function ExcalidrawBoard() {
             pendingSceneRef.current = null;
           }
 
-          const sceneSize = getByteSize(saveToWrite.serializedScene);
-          const scenePath = getWhiteboardScenePath(saveToWrite.userId);
-          const keepDatabaseFallback =
-            sceneSize <= DATABASE_SCENE_FALLBACK_MAX_BYTES;
-
           if (sceneSaveStatusTimerRef.current) {
             clearTimeout(sceneSaveStatusTimerRef.current);
             sceneSaveStatusTimerRef.current = null;
@@ -549,91 +890,26 @@ export function ExcalidrawBoard() {
           setSceneSaveStatus("saving");
           setSceneSaveMessage("正在保存白板...");
 
-          const { error: uploadError } = await supabase.storage
-            .from(WHITEBOARD_SCENE_BUCKET)
-            .upload(
-              scenePath,
-              new Blob([saveToWrite.serializedScene], {
-                type: "application/json",
-              }),
-              {
-              cacheControl: "0",
-              contentType: "application/json",
-              upsert: true,
-              },
-            );
+          const { error: deltaError } = await saveDeltaScene(saveToWrite);
+          let saveError: unknown = deltaError;
 
-          if (uploadError) {
-            console.warn("Failed to upload whiteboard scene", uploadError);
+          if (saveError) {
+            console.warn("Failed to save delta whiteboard scene", saveError);
+            const { error: fallbackError } =
+              await saveFullStorageScene(saveToWrite);
 
-            if (keepDatabaseFallback) {
-              const { error: fallbackError } =
-                await saveLegacyDatabaseScene(saveToWrite);
-
-              if (!fallbackError) {
-                markSceneSaved(saveToWrite);
-                saveToWrite = getNextQueuedSave();
-                continue;
-              }
-
-              console.warn(
-                "Failed to save fallback whiteboard scene",
-                fallbackError,
-              );
+            if (!fallbackError) {
+              saveError = null;
+            } else {
+              console.warn("Failed to save full whiteboard scene", fallbackError);
+              saveError = fallbackError;
             }
-
-            setSceneSaveStatus("error");
-            setSceneSaveMessage(
-              `白板保存失败：${getErrorMessage(uploadError)}${
-                keepDatabaseFallback
-                  ? ""
-                  : "。当前白板较大，请确认 Supabase Storage migration 已执行。"
-              }`,
-            );
-
-            if (!pendingSceneRef.current) {
-              pendingSceneRef.current = saveToWrite;
-            }
-            break;
           }
 
-          const { error } = await supabase
-            .from("whiteboard_scenes")
-            .upsert(
-              {
-                user_id: saveToWrite.userId,
-                elements: keepDatabaseFallback ? saveToWrite.scene.elements : [],
-                app_state: saveToWrite.scene.appState,
-                files: keepDatabaseFallback ? saveToWrite.scene.files : {},
-                storage_path: scenePath,
-                storage_size: sceneSize,
-                storage_updated_at: new Date().toISOString(),
-              },
-              { onConflict: "user_id" },
-            );
-
-          if (error) {
-            console.warn("Failed to save whiteboard scene", error);
-
-            if (keepDatabaseFallback) {
-              const { error: fallbackError } =
-                await saveLegacyDatabaseScene(saveToWrite);
-
-              if (!fallbackError) {
-                markSceneSaved(saveToWrite);
-                saveToWrite = getNextQueuedSave();
-                continue;
-              }
-
-              console.warn(
-                "Failed to save fallback whiteboard scene",
-                fallbackError,
-              );
-            }
-
+          if (saveError) {
             setSceneSaveStatus("error");
             setSceneSaveMessage(
-              `白板保存失败：${getErrorMessage(error)}。请确认数据库迁移已执行。`,
+              `白板保存失败：${getErrorMessage(saveError)}。请确认数据库迁移已执行。`,
             );
 
             if (!pendingSceneRef.current) {
@@ -649,7 +925,7 @@ export function ExcalidrawBoard() {
         isSceneSaveInFlightRef.current = false;
       }
     },
-    [supabase],
+    [rememberSavedScene, supabase],
   );
 
   useEffect(() => {
@@ -726,6 +1002,7 @@ export function ExcalidrawBoard() {
         userId: currentUserId,
         scene: persistedScene,
         serializedScene,
+        delta: getSceneDelta(persistedScene),
       };
 
       if (saveTimerRef.current) {
@@ -742,7 +1019,14 @@ export function ExcalidrawBoard() {
         void persistScene(pendingSave);
       }, SCENE_SAVE_DELAY_MS);
     },
-    [currentUserId, persistScene, sceneLoadedUserId, supabase, syncSlides],
+    [
+      currentUserId,
+      getSceneDelta,
+      persistScene,
+      sceneLoadedUserId,
+      supabase,
+      syncSlides,
+    ],
   );
 
   const persistLibrary = useCallback(
