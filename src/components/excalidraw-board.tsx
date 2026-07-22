@@ -551,11 +551,17 @@ export function ExcalidrawBoard() {
 
           const { error: uploadError } = await supabase.storage
             .from(WHITEBOARD_SCENE_BUCKET)
-            .upload(scenePath, new Blob([saveToWrite.serializedScene]), {
+            .upload(
+              scenePath,
+              new Blob([saveToWrite.serializedScene], {
+                type: "application/json",
+              }),
+              {
               cacheControl: "0",
               contentType: "application/json",
               upsert: true,
-            });
+              },
+            );
 
           if (uploadError) {
             console.warn("Failed to upload whiteboard scene", uploadError);

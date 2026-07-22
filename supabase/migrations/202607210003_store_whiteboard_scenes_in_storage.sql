@@ -15,7 +15,7 @@ values (
   'whiteboard-scenes',
   false,
   104857600,
-  array['application/json']::text[]
+  array['application/json', 'application/octet-stream']::text[]
 )
 on conflict (id) do update
 set
